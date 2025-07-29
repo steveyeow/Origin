@@ -64,7 +64,7 @@ export default function ConversationFlow({ className = '' }: ConversationFlowPro
       // Add message immediately without typing indicator for the first greeting
       addMessage({
         type: 'one',
-        content: "Hi traveler, welcome to Origin, your generative universe—thinks, feels, creates with you. I'm One, your navigator. You can give me any name you like."
+        content: "Hi traveler, welcome to Origin, your generative universe—thinks, feels, creates with you. I'm One, your navigator. Would you like to give me a new name?"
       })
     }
   }, [currentStep, addMessage])
@@ -288,9 +288,9 @@ export default function ConversationFlow({ className = '' }: ConversationFlowPro
       </div>
 
       {/* Input Form */}
-      <div className={`p-4 md:p-6 pb-20 md:pb-24 border-t ${theme === 'white' ? 'border-gray-200' : 'border-white/10'} mt-auto`} style={{marginBottom: '20px'}}>
+      <div className={`p-4 md:p-6 pb-6 md:pb-8 border-t ${theme === 'white' ? 'border-gray-200' : 'border-white/10'} mt-auto`}>
         <div className="w-full max-w-3xl mx-auto">
-          <form onSubmit={handleSubmit} className="flex mb-6 w-full">
+          <form onSubmit={handleSubmit} className="flex w-full">
             <div className="relative w-full">
               <input
                 type="text"
