@@ -17,7 +17,7 @@ const firaCode = Fira_Code({
 
 export const metadata: Metadata = {
   title: "OriginX - Your Generative Universe",
-  description: "A real-time generative content engine that thinks, feels, and creates with you. Experience the future of AI-powered creativity.",
+  description: "A real-time generative content engine that thinks, feels, and creates with you. Experience the future of AI-powered creativity and content consumption.",
   keywords: ["AI", "generative", "creative", "real-time", "content", "universe"],
   authors: [{ name: "OriginX Team" }],
   viewport: "width=device-width, initial-scale=1",
