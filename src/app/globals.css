@@ -1,0 +1,212 @@
+/* Import Space Grotesk for futuristic UI */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  --font-space: 'Space Grotesk', system-ui, sans-serif;
+  --font-fira-code: 'Fira Code', 'SF Mono', Consolas, monospace;
+}
+
+/* Theme variables */
+:root {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-space);
+  --font-mono: var(--font-fira-code);
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-space);
+  background: #0f172a;
+  color: #ffffff;
+  letter-spacing: 0.01em;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+/* Global White mode text color fix with maximum specificity */
+html[data-theme="white"] body,
+html[data-theme="white"] body *,
+html[data-theme="white"] p,
+html[data-theme="white"] span,
+html[data-theme="white"] div,
+html[data-theme="white"] h1,
+html[data-theme="white"] h2,
+html[data-theme="white"] h3,
+html[data-theme="white"] h4,
+html[data-theme="white"] h5,
+html[data-theme="white"] h6,
+html[data-theme="white"] button,
+html[data-theme="white"] input,
+html[data-theme="white"] textarea,
+html[data-theme="white"] label {
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+/* Specific overrides for conversation elements in White mode */
+html[data-theme="white"] .conversation-bubble,
+html[data-theme="white"] .conversation-bubble *,
+html[data-theme="white"] .conversation-bubble p,
+html[data-theme="white"] .conversation-bubble span,
+html[data-theme="white"] .conversation-bubble div,
+html[data-theme="white"] .conversation-bubble input,
+html[data-theme="white"] input,
+html[data-theme="white"] textarea,
+html[data-theme="white"] .input-container input,
+html[data-theme="white"] .TypewriterText,
+html[data-theme="white"] .TypewriterText *,
+html[data-theme="white"] .TypewriterText span,
+html[data-theme="white"] .message-text,
+html[data-theme="white"] .message-text * {
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+/* Force text color in white mode for specific components */
+html[data-theme="white"] .conversation-bubble .text-sm,
+html[data-theme="white"] .conversation-bubble .text-base,
+html[data-theme="white"] .conversation-bubble .text-md,
+html[data-theme="white"] .conversation-bubble .text-lg,
+html[data-theme="white"] .conversation-bubble .text-xl,
+html[data-theme="white"] .conversation-bubble p,
+html[data-theme="white"] .conversation-bubble span {
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+/* Ensure proper bottom margin for input container */
+.input-container-bottom-margin {
+  margin-bottom: 60px !important;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.5);
+}
+
+/* Selection styles */
+::selection {
+  background: rgba(139, 92, 246, 0.3);
+  color: white;
+}
+
+/* Focus styles */
+*:focus {
+  outline: 2px solid rgba(139, 92, 246, 0.5);
+  outline-offset: 2px;
+}
+
+/* Disable focus outline for mouse users */
+.js-focus-visible *:focus:not(.focus-visible) {
+  outline: none;
+}
+
+/* Ensure text is visible in white theme mode */
+html[data-theme="white"] .conversation-bubble p,
+html[data-theme="white"] .conversation-bubble span,
+html[data-theme="white"] .conversation-bubble div,
+html[data-theme="white"] .conversation-message,
+html[data-theme="white"] .conversation-text,
+html[data-theme="white"] .message-text {
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+/* Additional specific rule for conversation messages */
+.conversation-message,
+.message-text {
+  color: inherit;
+}
+
+html[data-theme="white"] .conversation-message,
+html[data-theme="white"] .message-text {
+  color: #000000 !important;
+  opacity: 1 !important;
+}
+
+html[data-theme="space"] .conversation-message,
+html[data-theme="space"] .message-text,
+html[data-theme="black"] .conversation-message,
+html[data-theme="black"] .message-text,
+html[data-theme="bright"] .conversation-message,
+html[data-theme="bright"] .message-text {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+/* Direct message text override */
+.message-text {
+  color: inherit !important;
+}
+
+html[data-theme="white"] .message-text,
+html[data-theme="white"] .conversation-text,
+html[data-theme="white"] .TypewriterText,
+html[data-theme="white"] .TypewriterText *,
+html[data-theme="white"] .TypewriterText span,
+html[data-theme="white"] .conversation-bubble .TypewriterText,
+html[data-theme="white"] .conversation-bubble .TypewriterText *,
+html[data-theme="white"] .conversation-bubble .TypewriterText span {
+  color: #000000 !important;
+  opacity: 1 !important;
+  font-weight: 500 !important;
+}
+
+/* Animation utilities */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.5s ease-out;
+}
