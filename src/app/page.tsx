@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppStore } from '@/store/useAppStore'
 import { useEngine } from '@/hooks/useEngine'
@@ -10,6 +10,7 @@ import ConversationFlow from '@/components/conversation/ConversationFlow'
 import BackgroundSwitcher, { BackgroundTheme } from '@/components/ui/BackgroundSwitcher'
 import { useThemeContext } from '@/context/ThemeContext'
 import TypewriterText from '@/components/ui/TypewriterText'
+import { ElevenLabsService, VOICE_PRESETS, DEFAULT_ONE_VOICE_CONFIG } from '@/services/voice/elevenlabs-service'
 
 export default function Home() {
   const { isOnboardingActive, setOnboardingActive, setCurrentStep, messages } = useAppStore()
@@ -21,6 +22,16 @@ export default function Home() {
   const [showPreviewMode, setShowPreviewMode] = useState(false)
   const [showGreetingBox, setShowGreetingBox] = useState(false)
   const [greetingComplete, setGreetingComplete] = useState(false)
+  
+  // Voice Mode states - Start in normal mode, not Voice Mode
+  const [isVoiceMode, setIsVoiceMode] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [isAISpeaking, setIsAISpeaking] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [voiceService, setVoiceService] = useState<ElevenLabsService | null>(null)
+  const [hasPlayedWelcome, setHasPlayedWelcome] = useState(false)
+  const [streamingMessage, setStreamingMessage] = useState('')
+  const conversationFlowRef = useRef<any>(null)
   
   // Initialize user when component mounts
   useEffect(() => {
@@ -50,6 +61,42 @@ export default function Home() {
     
     initUser()
   }, [userIdState, initializeUser])
+  
+  // Initialize voice service when entering Voice Mode
+  useEffect(() => {
+    const initVoiceService = async () => {
+      const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
+      const voiceId = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || VOICE_PRESETS.PROFESSIONAL
+      
+      console.log('🔊 Initializing voice service:', {
+        hasApiKey: !!apiKey,
+        voiceId,
+        currentVoiceService: !!voiceService
+      })
+      
+      if (apiKey && !voiceService) {
+        try {
+          const service = new ElevenLabsService({
+            apiKey,
+            voiceId,
+            ...DEFAULT_ONE_VOICE_CONFIG
+          })
+          setVoiceService(service)
+          console.log('✅ Voice service initialized successfully')
+        } catch (error) {
+          console.error('❌ Failed to initialize voice service:', error)
+        }
+      } else if (!apiKey) {
+        console.warn('⚠️ ElevenLabs API key not found in environment variables')
+      } else if (voiceService) {
+        console.log('ℹ️ Voice service already initialized')
+      }
+    }
+    
+    if (isVoiceMode) {
+      initVoiceService()
+    }
+  }, [isVoiceMode, voiceService])
   
   // Handle One click to start conversation
   const handleOneClick = async () => {
@@ -104,7 +151,22 @@ export default function Home() {
 
   return (
     <main className="min-h-screen relative overflow-hidden">
-      <DynamicBackground theme={theme} />
+      <DynamicBackground 
+        theme={theme} 
+        isVoiceMode={isVoiceMode}
+        isListening={isListening}
+        isAISpeaking={isAISpeaking}
+        isMuted={isMuted}
+        streamingMessage={streamingMessage}
+        onOrbClick={() => {
+          // SIMPLIFIED: Remove Voice Mode toggle from Orb
+          // Orb now only serves as visual indicator
+          console.log('🎤 Orb clicked - visual feedback only')
+        }}
+        // Voice Mode controls are now handled by ConversationFlow
+        onExitVoiceMode={() => {}}
+        onToggleMute={() => {}}
+      />
       <BackgroundSwitcher 
         currentTheme={theme} 
         onThemeChange={setTheme} 
@@ -112,7 +174,7 @@ export default function Home() {
       
       {/* Initial centered greeting */}
       {showInitialGreeting && (
-        <div className="absolute inset-0 flex items-center justify-center z-10">
+        <div className="absolute inset-0 flex items-center justify-center z-20">
           <motion.div 
             className="max-w-lg text-center px-6"
             initial={{ opacity: 0, y: 20 }}
@@ -121,7 +183,7 @@ export default function Home() {
             transition={{ duration: 0.8 }}
           >
             <motion.div 
-              className="relative mb-8"
+              className="relative mb-8 z-30"
               animate={{
                 scale: [1, 1.05, 1],
               }}
@@ -164,7 +226,7 @@ export default function Home() {
                 </div>
                 <div>
                   <TypewriterText 
-                    text="Your generative universe"
+                    text="your generative universe"
                     speed={30}
                     startDelay={4000}
                     style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
@@ -172,7 +234,7 @@ export default function Home() {
                 </div>
                 <div>
                   <TypewriterText 
-                    text="Thinks, feels, creates with you."
+                    text="that thinks, feels, creates with you."
                     speed={30}
                     startDelay={5000}
                     style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
@@ -188,7 +250,7 @@ export default function Home() {
                 </div>
                 <div>
                   <TypewriterText 
-                    text="Can you give me a name you like?"
+                    text="Would you like to give me a new name?"
                     speed={30}
                     startDelay={7000}
                     style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
@@ -200,7 +262,7 @@ export default function Home() {
             
             {greetingComplete && (
               <motion.button
-                className={`mt-12 backdrop-blur-md border px-10 py-4 rounded-2xl shadow-lg font-medium transition-all duration-300 ${
+                className={`mt-12 backdrop-blur-md border px-10 py-4 rounded-2xl shadow-lg font-medium transition-all duration-300 z-30 relative ${
                   theme === 'white' 
                     ? 'bg-blue-100/50 border-blue-200/50 text-blue-900 hover:bg-blue-100/70' 
                     : 'bg-white/10 border-white/20 text-white hover:bg-white/15'
@@ -223,7 +285,30 @@ export default function Home() {
       {isOnboardingActive && (
         <div className={`transition-all duration-500 ${showPreviewMode ? 'w-1/3 border-r border-white/10' : 'w-full'}`}>
           <div className="relative h-screen flex justify-center">
-            <ConversationFlow className="h-screen max-w-4xl w-full" />
+            {/* DEBUG: Voice service passing */}
+            {(() => {
+              console.log('🔊 Passing voiceService to ConversationFlow:', {
+                voiceService: !!voiceService,
+                voiceServiceType: voiceService?.constructor?.name,
+                isVoiceMode
+              })
+              return null
+            })()}
+            <ConversationFlow 
+              className="h-screen max-w-4xl w-full"
+              isMuted={isMuted}
+              voiceService={voiceService || undefined}
+              onVoiceModeChange={(newIsVoiceMode) => {
+                // Update parent state for DynamicBackground visual effects
+                setIsVoiceMode(newIsVoiceMode)
+                if (!newIsVoiceMode) {
+                  // Clean up when exiting Voice Mode
+                  setIsListening(false)
+                  setIsAISpeaking(false)
+                  setStreamingMessage('')
+                }
+              }}
+            />
           </div>
         </div>
       )}

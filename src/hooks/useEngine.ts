@@ -16,7 +16,7 @@ export function useEngine() {
   
   // Initialize engine layers
   useEffect(() => {
-    scenarioLayerRef.current = new InteractiveScenarioLayer()
+    scenarioLayerRef.current = new InteractiveScenarioLayer({})
   }, [])
 
   /**
@@ -61,13 +61,28 @@ export function useEngine() {
 
     try {
       // Get user context and update to naming-one step
-      const context = scenarioLayerRef.current.getUserContext(userId)
+      let context = scenarioLayerRef.current.getUserContext(userId)
       if (!context) {
-        throw new Error('User context not found')
+        // Initialize user context if not found
+        console.log('🔧 Initializing user context for userId:', userId)
+        context = {
+          userId,
+          sessionId: `session_${Date.now()}`,
+          currentStep: 'naming-one',
+          preferences: {},
+          recentInteractions: [],
+          timeContext: {
+            timeOfDay: 'afternoon',
+            dayOfWeek: new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          }
+        }
+        await scenarioLayerRef.current.createUserContext(context)
       }
 
       // Update context to start onboarding
-      await scenarioLayerRef.current.updateUserContext(userId, {
+      await scenarioLayerRef.current.updateUserContext({
+        ...context,
         currentStep: 'naming-one'
       })
 

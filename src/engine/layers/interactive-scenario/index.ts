@@ -1,14 +1,19 @@
-import type { UserContext, Scenario, EngineResponse, OnboardingStep, IInteractiveScenarioLayer } from '../../../types/engine'
+import type { UserContext, Scenario, EngineResponse, OnboardingStep, IInteractiveScenarioLayer, Capability } from '../../../types/engine'
 import { ONBOARDING_SCENARIOS, GENERAL_SCENARIOS } from './scenarios'
 import { generateScenarioId, selectScenarioByContext } from './utils'
+import { OpenAIService } from '../../../services/llm/openai-service'
 
 /**
  * Interactive Scenario Layer (ISL)
- * MVP Implementation: Static scenario selection with basic context awareness
- * Future: Dynamic LLM-powered scenario generation
+ * Enhanced with AI-driven scenario generation
  */
 export class InteractiveScenarioLayer implements IInteractiveScenarioLayer {
   private userContexts = new Map<string, UserContext>()
+  private llmService: OpenAIService
+
+  constructor() {
+    this.llmService = new OpenAIService()
+  }
 
   /**
    * Propose a scenario based on user context
@@ -146,6 +151,58 @@ export class InteractiveScenarioLayer implements IInteractiveScenarioLayer {
   }
 
   /**
+   * Generate dynamic scenario based on context and available capabilities
+   * AI-driven scenario generation using LLM
+   */
+  async generateDynamicScenario(context: UserContext, availableCapabilities: Capability[]): Promise<Scenario> {
+    try {
+      // Try AI-powered generation first
+      if (this.llmService.isReady()) {
+        console.log('🤖 Generating AI-powered scenario...')
+        const aiScenario = await this.llmService.generateDynamicScenario(context, availableCapabilities)
+        
+        return {
+          id: generateScenarioId(),
+          type: 'creative_prompt',
+          title: aiScenario.title,
+          description: aiScenario.description,
+          prompt: aiScenario.prompt,
+          difficulty: this.inferDifficultyFromContext(context),
+          estimatedTime: this.estimateTimeFromContext(context),
+          tags: [...aiScenario.tags, 'ai-generated', 'personalized']
+        }
+      }
+    } catch (error) {
+      console.warn('AI scenario generation failed, falling back to enhanced static:', error)
+    }
+    
+    // Fallback to enhanced static selection
+    console.log('📝 Using enhanced static scenario generation...')
+    return this.generateEnhancedStaticScenario(context, availableCapabilities)
+  }
+
+  /**
+   * Explain a capability in user-friendly terms
+   * AI-powered personalized explanations
+   */
+  async explainCapability(capability: Capability, userContext: UserContext): Promise<string> {
+    try {
+      // Try AI-powered explanation first
+      if (this.llmService.isReady()) {
+        console.log('🤖 Generating AI-powered capability explanation...')
+        const aiExplanation = await this.llmService.explainCapability(capability, userContext)
+        return aiExplanation
+      }
+    } catch (error) {
+      console.warn('AI capability explanation failed, falling back to template:', error)
+    }
+    
+    // Fallback to template-based explanation
+    console.log('📝 Using template-based capability explanation...')
+    return this.generateTemplateExplanation(capability, userContext)
+  }
+
+  /**
    * Create initial user context
    */
   createUserContext(userId: string): UserContext {
@@ -177,5 +234,160 @@ export class InteractiveScenarioLayer implements IInteractiveScenarioLayer {
 
     this.userContexts.set(userId, context)
     return context
+  }
+
+  // ===== PRIVATE AI-ENHANCEMENT METHODS =====
+
+  private enhanceDescriptionWithCapabilities(baseDescription: string, capabilities: Capability[]): string {
+    const capabilityCount = capabilities.length
+    const modelCount = capabilities.filter(c => c.type === 'model').length
+    const agentCount = capabilities.filter(c => c.type === 'agent').length
+    
+    if (capabilityCount === 0) {
+      return baseDescription
+    }
+    
+    const enhancement = capabilityCount > 5 
+      ? ` I have access to ${capabilityCount} different AI capabilities to help bring your ideas to life!`
+      : modelCount > 0 
+        ? ` I can use advanced AI models to help you create amazing content!`
+        : ` I have specialized tools and agents ready to assist you!`
+    
+    return baseDescription + enhancement
+  }
+
+  private enhancePromptWithCapabilities(basePrompt: string, context: UserContext, capabilities: Capability[]): string {
+    if (capabilities.length === 0) {
+      return basePrompt
+    }
+    
+    // Find the most relevant capability based on context
+    const relevantCapability = this.findMostRelevantCapability(capabilities, context)
+    
+    if (!relevantCapability) {
+      return basePrompt
+    }
+    
+    // Add capability-specific enhancement
+    const capabilityHint = this.getCapabilityHint(relevantCapability, context)
+    
+    return `${basePrompt} ${capabilityHint}`
+  }
+
+  private findMostRelevantCapability(capabilities: Capability[], context: UserContext): Capability | null {
+    // Simple relevance scoring based on user context
+    const timeOfDay = context.timeContext.timeOfDay
+    const mood = context.emotionalState?.mood || 'curious'
+    
+    // Score capabilities based on context
+    const scoredCapabilities = capabilities.map(capability => {
+      let score = 0
+      
+      // Time-based scoring
+      if (timeOfDay === 'morning' && capability.capabilities.includes('text_generation')) score += 2
+      if (timeOfDay === 'evening' && capability.capabilities.includes('image_generation')) score += 2
+      
+      // Mood-based scoring
+      if (mood === 'creative' && capability.type === 'model') score += 3
+      if (mood === 'focused' && capability.type === 'agent') score += 2
+      
+      // Quality-based scoring
+      score += (capability.metadata.qualityScore || 0.5) * 2
+      
+      return { capability, score }
+    })
+    
+    // Return the highest scoring capability
+    const best = scoredCapabilities.sort((a, b) => b.score - a.score)[0]
+    return best ? best.capability : null
+  }
+
+  /**
+   * Helper methods for scenario enhancement and AI integration
+   */
+  private inferDifficultyFromContext(context: UserContext): 'beginner' | 'intermediate' | 'advanced' {
+    const creativityLevel = context.preferences.creativityLevel
+    if (creativityLevel === 'conservative') return 'beginner'
+    if (creativityLevel === 'experimental') return 'advanced'
+    return 'intermediate'
+  }
+
+  private estimateTimeFromContext(context: UserContext): string {
+    const timeOfDay = context.timeContext.timeOfDay
+    if (timeOfDay === 'morning') return '15-30 minutes'
+    if (timeOfDay === 'evening') return '10-20 minutes'
+    return '20-40 minutes'
+  }
+
+  private async generateEnhancedStaticScenario(context: UserContext, availableCapabilities: Capability[]): Promise<Scenario> {
+    const capabilityTypes = availableCapabilities.map(cap => cap.type)
+    
+    // Create a more sophisticated scenario based on available capabilities
+    const baseScenario = this.selectGeneralScenario(context)
+    
+    // Enhance the scenario with capability-aware content
+    const enhancedScenario: Scenario = {
+      ...baseScenario,
+      id: generateScenarioId(),
+      description: this.enhanceDescriptionWithCapabilities(baseScenario.description, availableCapabilities),
+      prompt: this.enhancePromptWithCapabilities(baseScenario.prompt, context, availableCapabilities),
+      tags: [...baseScenario.tags, 'ai-enhanced', ...capabilityTypes]
+    }
+    
+    return enhancedScenario
+  }
+
+  private generateTemplateExplanation(capability: Capability, userContext: UserContext): string {
+    const explanationTemplates = {
+      model: `I have access to ${capability.name}, which is a powerful AI model that can help with ${capability.capabilities.join(', ')}. This means I can ${this.getCapabilityBenefits(capability)} for you!`,
+      agent: `I can use ${capability.name}, a specialized assistant that excels at ${capability.capabilities.join(', ')}. This agent can ${this.getCapabilityBenefits(capability)} to make your content even better!`,
+      tool: `I have ${capability.name} in my toolkit, which allows me to ${capability.capabilities.join(', ')}. This tool helps me ${this.getCapabilityBenefits(capability)} with precision!`,
+      effect: `I can apply ${capability.name}, a special effect that enhances content through ${capability.capabilities.join(', ')}. This effect can ${this.getCapabilityBenefits(capability)} to make your content more engaging!`
+    }
+    
+    const baseExplanation = explanationTemplates[capability.type] || `I can use ${capability.name} to help you with ${capability.capabilities.join(', ')}.`
+    
+    // Personalize based on user context
+    const personalizedExplanation = this.personalizeExplanation(baseExplanation, userContext)
+    
+    return personalizedExplanation
+  }
+
+  private enhanceDescriptionWithCapabilities(description: string, capabilities: Capability[]): string {
+    const capabilityCount = capabilities.length
+    const capabilityTypes = [...new Set(capabilities.map(cap => cap.type))]
+    
+    return `${description} I have ${capabilityCount} AI capabilities available, including ${capabilityTypes.join(', ')} to help bring your ideas to life.`
+  }
+
+  private enhancePromptWithCapabilities(prompt: string, context: UserContext, capabilities: Capability[]): string {
+    const relevantCapabilities = capabilities.slice(0, 3) // Show top 3
+    const capabilityList = relevantCapabilities.map(cap => cap.name).join(', ')
+    
+    return `${prompt} With my ${capabilityList} capabilities, I can help you create something truly special. What would you like to explore?`
+  }
+
+  private getCapabilityBenefits(capability: Capability): string {
+    const benefitMap = {
+      model: 'generate high-quality content',
+      agent: 'provide specialized assistance',
+      tool: 'perform precise operations',
+      effect: 'enhance and transform content'
+    }
+    
+    return benefitMap[capability.type] || 'assist you effectively'
+  }
+
+  private personalizeExplanation(explanation: string, context: UserContext): string {
+    const name = context.name || 'friend'
+    const mood = context.emotionalState?.mood || 'curious'
+    
+    if (mood === 'excited') {
+      return `Hey ${name}! ${explanation} This is going to be amazing! ✨`
+    } else if (mood === 'focused') {
+      return `${name}, ${explanation} Let's create something professional and polished.`
+    } else {
+      return `${name}, ${explanation} I'm here to help you explore your creativity!`
+    }
   }
 }

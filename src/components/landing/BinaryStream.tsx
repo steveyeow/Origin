@@ -1,7 +1,11 @@
 import { motion } from 'framer-motion';
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
-export const BinaryStream = () => {
+export default function BinaryStream() {
+  const [isVisible, setIsVisible] = useState(false)
+  const [binaryData, setBinaryData] = useState<string[][]>([])
+  const [isClient, setIsClient] = useState(false)
+
   const streamPatterns = [
     '[ SYSTEM_CORE_ACTIVE ]',
     '[ QUANTUM_SYNC_ENABLED ]',
@@ -63,7 +67,19 @@ export const BinaryStream = () => {
     return availablePatterns[Math.floor(Math.random() * availablePatterns.length)];
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
+    // Set client flag to prevent hydration mismatch
+    setIsClient(true)
+    
+    // Generate initial binary data
+    const initialData = Array.from({ length: 12 }, () => 
+      Array.from({ length: 40 }, () => Math.random() > 0.5 ? '1' : '0')
+    )
+    setBinaryData(initialData)
+    setIsVisible(true)
+  }, [])
+
+  useEffect(() => {
     const interval = setInterval(() => {
       setFlashingElements(prev => {
         const current = prev.filter(el => el.id > Date.now() - 5000);
@@ -92,7 +108,9 @@ export const BinaryStream = () => {
     return () => clearInterval(interval);
   }, []);
 
-
+  if (!isClient || !isVisible || binaryData.length === 0) {
+    return null
+  };
 
   return (
     <div className="absolute inset-0 overflow-hidden">
@@ -120,7 +138,7 @@ export const BinaryStream = () => {
                 repeatType: "loop"
               }}
             >
-              {Array.from({ length: 40 }).map((_, i) => (
+              {Array.from({ length: 40 }, (_, i) => i).map((i) => (
                 <div
                   key={i}
                   className="font-mono whitespace-pre relative"

@@ -1,12 +1,17 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { BinaryStream } from './BinaryStream'
+import BinaryStream from './BinaryStream'
 
 export default function SpaceBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number | undefined>(undefined)
+  const [randomValues, setRandomValues] = useState({
+    smallStars: Array.from({ length: 80 }).map(() => Math.random()),
+    mediumStars: Array.from({ length: 20 }).map(() => Math.random()),
+    flares: Array.from({ length: 5 }).map(() => Math.random()),
+  })
 
   useEffect(() => {
     const canvas = canvasRef.current
