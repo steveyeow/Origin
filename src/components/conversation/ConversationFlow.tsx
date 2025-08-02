@@ -11,13 +11,26 @@ declare global {
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppStore } from '@/store/useAppStore'
-import { Send, Mic, MicOff, Paperclip, User } from 'lucide-react'
+import { Send, Mic, MicOff, Paperclip, User, Brain, Sparkles } from 'lucide-react'
 import { useThemeContext } from '@/context/ThemeContext'
 import TypewriterText from '@/components/ui/TypewriterText'
 import { OriginXEngine } from '@/engine/core/engine'
 import { OpenAIService } from '@/services/llm/openai-service'
 import { ElevenLabsService, DEFAULT_ONE_VOICE_CONFIG, VOICE_PRESETS } from '@/services/voice/elevenlabs-service'
 import type { UserContext, Scenario } from '@/types/engine'
+
+// Debug helper to log both to console and terminal
+const debugLog = (message: string, data?: any) => {
+  console.log(message, data || '')
+  // Also send to terminal via fetch (non-blocking)
+  if (typeof window !== 'undefined') {
+    fetch('/api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, data })
+    }).catch(() => {}) // Ignore errors
+  }
+}
 
 interface ConversationFlowProps {
   className?: string
@@ -70,6 +83,15 @@ export default function ConversationFlow({
   voiceService,
   onVoiceModeChange
 }: ConversationFlowProps) {
+  // CRITICAL DEBUG: Check props at component start
+  console.log('🚀 ConversationFlow component started with props:', {
+    className,
+    isMuted,
+    voiceService: !!voiceService,
+    voiceServiceType: voiceService?.constructor?.name,
+    onVoiceModeChange: !!onVoiceModeChange
+  })
+  
   // Get theme context for adaptive colors
   const { theme, getTextColor } = useThemeContext();
   const {
@@ -93,12 +115,13 @@ export default function ConversationFlow({
   // SIMPLIFIED: Only internal Voice Mode states
   const [isListening, setIsListening] = useState(false)
   const [isVoiceMode, setIsVoiceMode] = useState(false)
-  const [isAISpeaking, setIsAISpeaking] = useState(false)
+  const [isAISpeaking, setIsAISpeaking] = useState(false) // Track AI speech state
   const [streamingMessage, setStreamingMessage] = useState('')
   const [internalIsMuted, setInternalIsMuted] = useState(false)
+  const [manuallyMuted, setManuallyMuted] = useState(false) // Track manual mute state
   
-  // Always use internal mute state for Voice Mode functionality
-  const effectiveIsMuted = internalIsMuted
+  // Effective mute state: manually muted OR AI is speaking
+  const effectiveIsMuted = manuallyMuted || isAISpeaking
   
   // Voice Mode ref is already updated in the useEffect above
   
@@ -119,6 +142,8 @@ export default function ConversationFlow({
   // CRITICAL: Use ref to store latest Voice Mode state for callbacks
   const voiceModeRef = useRef(isVoiceMode)
   const mutedRef = useRef(effectiveIsMuted)
+  const recognitionInstanceRef = useRef<any>(null)
+  const isAISpeakingRef = useRef(isAISpeaking)
   
   // Update ref when Voice Mode state changes and notify parent
   useEffect(() => {
@@ -132,6 +157,12 @@ export default function ConversationFlow({
     mutedRef.current = effectiveIsMuted
     console.log('🔇 Mute state ref updated:', effectiveIsMuted)
   }, [effectiveIsMuted])
+  
+  // Update isAISpeakingRef when AI speaking state changes
+  useEffect(() => {
+    isAISpeakingRef.current = isAISpeaking
+    console.log('🤖 AI speaking state ref updated:', isAISpeaking)
+  }, [isAISpeaking])
   
   // Prevent duplicate voice synthesis
   const lastSynthesizedContentRef = useRef('')
@@ -370,8 +401,16 @@ export default function ConversationFlow({
             currentVoiceMode, 
             transcript,
             transcriptLength: transcript.length,
-            willProcess: transcript.trim().length > 0
+            isAISpeaking,
+            willProcess: transcript.trim().length > 0 && !isAISpeaking
           })
+          
+          // CRITICAL: Don't process voice input if AI is speaking (prevents feedback loop)
+          if (isAISpeaking) {
+            console.log('🚫 AI is speaking - ignoring voice input to prevent feedback loop')
+            setVoiceTranscript('')
+            return
+          }
           
           if (transcript.trim()) {
             console.log('🎤 Processing voice input as message:', transcript)
@@ -410,8 +449,16 @@ export default function ConversationFlow({
             console.log('⏰ Auto-processing timer fired!', {
               transcript: lastTranscript,
               length: lastTranscript.length,
-              currentVoiceMode: currentMode
+              currentVoiceMode: currentMode,
+              isAISpeaking
             })
+            
+            // CRITICAL: Don't process if AI is speaking (prevents feedback loop)
+            if (isAISpeaking) {
+              console.log('🚫 AI is speaking - canceling auto-processing to prevent feedback loop')
+              setVoiceTranscript('')
+              return
+            }
             
             if (currentMode && lastTranscript.trim() && lastTranscript.length > 1) {
               console.log('🚀 Auto-sending voice message:', lastTranscript.trim())
@@ -434,12 +481,12 @@ export default function ConversationFlow({
           console.warn('🚫 Microphone access denied - check browser permissions')
           alert('Microphone access denied. Please allow microphone access and try again.')
         } else if (event.error === 'no-speech') {
-          console.log('🔇 No speech detected, will retry in Voice Mode')
-          // Auto-restart if no speech detected in Voice Mode
-          if (voiceModeRef.current && !mutedRef.current) {
+          console.log('🔇 No speech detected')
+          // Only auto-restart if not during AI speech and in Voice Mode
+          if (voiceModeRef.current && !mutedRef.current && !isAISpeakingRef.current) {
             setTimeout(() => {
               console.log('🔄 Attempting to restart voice recognition after no-speech')
-              if (voiceModeRef.current && !mutedRef.current) {
+              if (voiceModeRef.current && !mutedRef.current && !isAISpeakingRef.current) {
                 try {
                   startVoiceRecognition()
                 } catch (restartError) {
@@ -450,11 +497,13 @@ export default function ConversationFlow({
           }
         } else {
           console.error('🚫 Other speech recognition error:', event.error)
-          // For other errors, try to restart if in Voice Mode
-          if (isVoiceMode && !isMuted && event.error !== 'aborted') {
+          // For other errors, try to restart if in Voice Mode and not during AI speech
+          if (isVoiceMode && !isMuted && !isAISpeakingRef.current && event.error !== 'aborted') {
             setTimeout(() => {
               console.log('🔄 Attempting to restart voice recognition after error')
-              startVoiceRecognition()
+              if (!isAISpeakingRef.current) {
+                startVoiceRecognition()
+              }
             }, 2000)
           }
         }
@@ -465,46 +514,54 @@ export default function ConversationFlow({
         setIsListening(false)
         setShowListeningIndicator(false)
         
-        // SIMPLIFIED: In Voice Mode, automatically restart recognition
+        // CRITICAL: Check if AI is speaking or manually muted before restarting
         console.log('🔍 Auto-restart check:', {
           voiceModeRef: voiceModeRef.current,
-          mutedRef: mutedRef.current,
-          shouldRestart: voiceModeRef.current && !mutedRef.current
+          manuallyMuted,
+          isAISpeaking,
+          isAISpeakingRef: isAISpeakingRef.current,
+          shouldRestart: voiceModeRef.current && !manuallyMuted && !isAISpeakingRef.current
         })
         
-        if (voiceModeRef.current && !mutedRef.current) {
+        if (voiceModeRef.current && !manuallyMuted && !isAISpeakingRef.current) {
           console.log('🔄 Auto-restarting voice recognition in Voice Mode')
           setTimeout(() => {
             console.log('🔍 Delayed restart check:', {
               voiceModeRef: voiceModeRef.current,
-              mutedRef: mutedRef.current,
-              shouldRestart: voiceModeRef.current && !mutedRef.current
+              manuallyMuted,
+              isAISpeaking,
+              isAISpeakingRef: isAISpeakingRef.current,
+              shouldRestart: voiceModeRef.current && !manuallyMuted && !isAISpeakingRef.current
             })
             
-            if (voiceModeRef.current && !mutedRef.current && recognitionInstance) {
-              try {
-                recognitionInstance.start()
-                setIsListening(true)
-                setShowListeningIndicator(true)
-                console.log('✅ Voice recognition restarted successfully')
-              } catch (error) {
-                console.error('❌ Failed to restart recognition:', error)
-              }
+            if (voiceModeRef.current && !manuallyMuted && !isAISpeakingRef.current) {
+              console.log('🔄 Auto-restarting voice recognition via startVoiceRecognition()')
+              // Use the centralized start function to avoid conflicts
+              setTimeout(() => {
+                if (voiceModeRef.current && !manuallyMuted && !isAISpeakingRef.current) {
+                  startVoiceRecognition()
+                }
+              }, 100)
             } else {
-              console.log('⚠️ Skipping restart - conditions not met')
+              console.log('⚠️ Skipping restart - conditions not met:', {
+                voiceMode: voiceModeRef.current,
+                manuallyMuted,
+                aiSpeaking: isAISpeaking
+              })
             }
           }, 500)
         } else {
           console.log('✅ Listening state cleared:', { 
             isListening: false, 
             showIndicator: false,
-            reason: !voiceModeRef.current ? 'not in voice mode' : 'muted'
+            reason: !voiceModeRef.current ? 'not in voice mode' : manuallyMuted ? 'manually muted' : 'AI is speaking'
           })
         }
       }
       
       console.log('✅ Speech recognition instance created and configured')
       setRecognition(recognitionInstance)
+      recognitionInstanceRef.current = recognitionInstance
     } else {
       console.error('❌ Speech recognition API not available in this browser')
       alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.')
@@ -532,12 +589,12 @@ export default function ConversationFlow({
       isMuted 
     })
     
-    if (isVoiceMode && recognition && !effectiveIsMuted) {
-      // In Voice Mode, always keep voice recognition active
+    if (isVoiceMode && recognition && !manuallyMuted && !isAISpeakingRef.current) {
+      // In Voice Mode, start voice recognition only if not manually muted and AI not speaking
       if (!isListening) {
-        console.log('🎤 Voice Mode active - starting voice recognition')
+        console.log('🎙️ Voice Mode active - starting voice recognition')
         setTimeout(() => {
-          if (isVoiceMode && !effectiveIsMuted && !isListening) {
+          if (isVoiceMode && !manuallyMuted && !isAISpeakingRef.current && !isListening) {
             startVoiceRecognition()
           }
         }, 100)
@@ -549,7 +606,55 @@ export default function ConversationFlow({
       setShowListeningIndicator(false)
       setIsListening(false)
     }
-  }, [isVoiceMode, recognition, effectiveIsMuted]) // Removed isListening from dependencies to avoid loops
+  }, [isVoiceMode, recognition, manuallyMuted]) // Removed isAISpeaking to prevent restart during AI speech
+  
+  // CRITICAL: Auto-mute microphone during AI speech to prevent feedback loops
+  useEffect(() => {
+    debugLog('🎙️ AI Speech state changed:', { 
+      isAISpeaking, 
+      isVoiceMode, 
+      isListening, 
+      manuallyMuted,
+      effectiveIsMuted,
+      recognition: !!recognition 
+    })
+    
+    if (!isVoiceMode || !recognition) return
+    
+    if (isAISpeaking) {
+      // AI started speaking - immediately stop voice recognition (auto-mute)
+      debugLog('🔇 AI started speaking - AUTO-MUTING and stopping voice recognition')
+      try {
+        if (isListening) {
+          recognition.stop()
+          setIsListening(false)
+          setShowListeningIndicator(false)
+        }
+      } catch (error) {
+        debugLog('❌ Error stopping recognition:', error)
+      }
+    } else if (!manuallyMuted) {
+      // AI finished speaking - restart voice recognition if not manually muted
+      debugLog('🔊 AI finished speaking - AUTO-UNMUTING and restarting voice recognition')
+      setTimeout(() => {
+        // Double-check states before restarting
+        if (!isAISpeaking && !manuallyMuted && isVoiceMode) {
+          debugLog('🔄 Auto-restarting voice recognition after AI finished speaking')
+          // Use the centralized start function to avoid conflicts
+          startVoiceRecognition()
+        } else {
+          debugLog('⚠️ Skipping auto-restart:', {
+            isAISpeaking,
+            manuallyMuted,
+            isVoiceMode,
+            hasRecognition: !!recognition
+          })
+        }
+      }, 500) // Small delay to ensure AI speech has fully stopped
+    } else {
+      debugLog('🔇 AI finished speaking but user is manually muted - not restarting')
+    }
+  }, [isAISpeaking, isVoiceMode, recognition, manuallyMuted, isListening])
   
   // Helper function to start voice recognition with proper error handling
   const startVoiceRecognition = () => {
@@ -558,8 +663,13 @@ export default function ConversationFlow({
       return
     }
     
-    if (effectiveIsMuted) {
-      console.log('🔇 Recognition muted, not starting')
+    if (manuallyMuted) {
+      console.log('🔇 Recognition manually muted, not starting')
+      return
+    }
+    
+    if (isAISpeakingRef.current) {
+      console.log('🤖 AI is speaking, not starting recognition')
       return
     }
     
@@ -578,7 +688,7 @@ export default function ConversationFlow({
         console.log('✅ Microphone permission granted')
         
         // Double-check if still not listening before starting
-        if (!isListening) {
+        if (!isListening && !isAISpeakingRef.current) {
           try {
             recognition.start()
             console.log('🎤 Voice recognition start command sent')
@@ -592,8 +702,10 @@ export default function ConversationFlow({
             }
           }
         } else {
-          console.log('⚠️ Recognition started while checking permissions')
-          setShowListeningIndicator(true)
+          console.log('⚠️ Recognition started while checking permissions or AI is speaking')
+          if (!isAISpeakingRef.current) {
+            setShowListeningIndicator(true)
+          }
         }
       })
       .catch((error) => {
@@ -668,11 +780,13 @@ export default function ConversationFlow({
 
   // Voice input functions
   const startVoiceInput = () => {
-    if (recognition && !isListening && !effectiveIsMuted) {
-      console.log('🎤 Starting voice input')
-      recognition.start()
-    } else if (effectiveIsMuted) {
-      console.log('🔇 Voice input muted, not starting recognition')
+    if (!manuallyMuted && !isAISpeakingRef.current) {
+      console.log('🎤️ Starting voice input via startVoiceRecognition()')
+      startVoiceRecognition()
+    } else if (manuallyMuted) {
+      console.log('🔇 Voice input manually muted, not starting recognition')
+    } else if (isAISpeakingRef.current) {
+      console.log('🤖 AI is speaking, not starting voice input')
     }
   }
 
@@ -682,61 +796,139 @@ export default function ConversationFlow({
     }
   }
 
-  // Stream message with typing effect and voice synthesis
+  // Stream message with synchronized voice and subtitles
   const streamMessage = async (content: string) => {
-    console.log('🗨️ streamMessage called:', { 
+    debugLog('🗨️ streamMessage called:', { 
       content: content.substring(0, 50) + '...', 
       isVoiceMode,
-      voiceModeRef: voiceModeRef.current,
-      voiceService: !!voiceService 
+      voiceService: !!voiceService
     })
     
-    // Voice Mode check is already done before calling this function
-    // Proceeding with Voice Mode features
-    
-    console.log('✅ In Voice Mode - processing subtitles and voice synthesis')
-    
-    // 1. ALWAYS set streaming message for subtitles in Voice Mode
-    console.log('📝 Setting streamingMessage for subtitles:', content.substring(0, 50) + '...')
-    setStreamingMessage(content)
-    
-    // 2. Set AI speaking state
+    // STEP 1: Immediately set AI speaking state and FORCE STOP voice recognition
+    debugLog('🔊 STEP 1: Setting AI speaking state and STOPPING voice recognition')
     setIsAISpeaking(true)
+    isAISpeakingRef.current = true  // CRITICAL: Immediately update ref for synchronous access
+    
+    // CRITICAL: Force stop voice recognition when AI starts speaking
+    // We need to stop BOTH the state recognition AND the actual recognition instance
+    if (recognition) {
+      debugLog('🛑 FORCING recognition state to STOP - AI is about to speak')
+      try {
+        recognition.stop()
+        debugLog('✅ Recognition state STOPPED successfully')
+      } catch (error) {
+        debugLog('❌ Failed to stop recognition state:', error)
+      }
+    }
+    
+    // CRITICAL: Also stop the actual recognition instance
+    if (recognitionInstanceRef.current) {
+      debugLog('🛑 FORCING recognitionInstance to STOP - AI is about to speak')
+      try {
+        recognitionInstanceRef.current.stop()
+        debugLog('✅ RecognitionInstance STOPPED successfully')
+      } catch (error) {
+        debugLog('❌ Failed to stop recognitionInstance:', error)
+      }
+    }
+    
+    // Also force stop listening state regardless
+    if (isListening) {
+      debugLog('🛑 FORCING listening state to FALSE - AI is about to speak')
+      setIsListening(false)
+      setShowListeningIndicator(false)
+      debugLog('✅ Listening state set to FALSE')
+    }
+    
+    // STEP 2: Start voice synthesis and subtitles in parallel
+    debugLog('🔊 STEP 2: Starting voice synthesis and subtitles in parallel')
+    
+    let voiceSynthesisPromise: Promise<void> | null = null
+    
+    // Callback to show subtitles when audio actually starts playing
+    const onAudioStart = () => {
+      debugLog('📝 Audio started - showing subtitles now')
+      setStreamingMessage(content)
+      playSciFiSound('ai-start')
+    }
+    
+    if (voiceService) {
+      debugLog('🎤️ Using provided voiceService for synthesis')
+      voiceSynthesisPromise = voiceService.speakText(content, undefined, { onStart: onAudioStart })
+    } else {
+      // Emergency voice service creation
+      const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
+      const voiceId = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || VOICE_PRESETS.PROFESSIONAL
+      
+      if (apiKey) {
+        debugLog('🆘 Creating emergency voice service')
+        const emergencyVoiceService = new ElevenLabsService({
+          apiKey,
+          voiceId,
+          ...DEFAULT_ONE_VOICE_CONFIG
+        })
+        voiceSynthesisPromise = emergencyVoiceService.speakText(content, undefined, { onStart: onAudioStart })
+      } else {
+        debugLog('❌ No voice service available - skipping synthesis')
+        // If no voice service, show subtitles immediately
+        onAudioStart()
+      }
+    }
+    
+    // STEP 3: Hide listening indicator immediately (but subtitles will show when audio starts)
+    debugLog('🔇 STEP 3: Hiding listening indicator - AI about to speak')
     setShowListeningIndicator(false)
     
-    // 3. Play sci-fi sound
-    playSciFiSound('ai-start')
-    
-    // 4. Voice synthesis - ALWAYS attempt if voiceService is available
-    if (voiceService) {
-      console.log('🔊 Starting voice synthesis...')
-      
+    // STEP 4: Wait for voice synthesis to complete
+    let voiceSynthesisSucceeded = false
+    if (voiceSynthesisPromise) {
+      debugLog('⏳ STEP 4: Waiting for voice synthesis to complete...')
       try {
-        await voiceService.synthesizeSpeech(content)
-        console.log('✅ Voice synthesis completed successfully')
-        
+        await voiceSynthesisPromise
+        debugLog('✅ STEP 4: Voice synthesis completed successfully')
+        voiceSynthesisSucceeded = true
       } catch (error) {
-        console.error('❌ Voice synthesis failed:', error)
+        debugLog('❌ STEP 4: Voice synthesis failed:', error)
+        // If voice synthesis failed, show the content as subtitles immediately
+        debugLog('📝 Showing subtitles due to voice synthesis failure')
+        setStreamingMessage(content)
+        playSciFiSound('ai-start')
+        // Simulate shorter AI speaking time for failed synthesis
+        await new Promise(resolve => setTimeout(resolve, 2000))
       }
-      
     } else {
-      console.warn('⚠️ No voice service available for synthesis')
+      debugLog('⚠️ STEP 4: No voice synthesis was started - showing subtitles and simulating delay')
+      // If no voice synthesis, show subtitles and simulate AI speaking
+      setStreamingMessage(content)
+      playSciFiSound('ai-start')
+      await new Promise(resolve => setTimeout(resolve, 3000))
     }
     
-    // 5. Restore listening state after AI finishes speaking
+    // STEP 5: Reset AI speaking state ONLY after voice completes
+    debugLog('🔇 STEP 5: AI FINISHED speaking - resetting state')
+    
+    // CRITICAL: Double-check that voice service is not playing (only if synthesis succeeded)
+    // This ensures audio is completely finished before allowing voice recognition restart
+    if (voiceSynthesisSucceeded && voiceService && voiceService.isCurrentlyPlaying()) {
+      debugLog('⚠️ Voice service still playing, waiting additional time...')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    
+    // Add extra delay to ensure audio is completely finished (shorter delay if synthesis failed)
+    const delayTime = voiceSynthesisSucceeded ? 500 : 200
+    await new Promise(resolve => setTimeout(resolve, delayTime))
+    
     setIsAISpeaking(false)
-    if (!effectiveIsMuted) {
-      console.log('🔄 Restoring listening indicator')
-      setShowListeningIndicator(true)
-    }
+    isAISpeakingRef.current = false  // CRITICAL: Immediately update ref for synchronous access
+    debugLog('✅ AI speaking state reset completed with extra delay')
     
-    // 6. Clear streaming message after delay to show subtitles
+    // STEP 6: Clear streaming message after delay
     setTimeout(() => {
-      console.log('🧽 Clearing streamingMessage after delay')
+      debugLog('🧹 STEP 6: Clearing streaming message after delay')
       setStreamingMessage('')
-    }, 2000) // Longer delay to ensure subtitles are visible
+    }, 2000)
     
-    console.log('✅ streamMessage completed successfully')
+    debugLog('✅ streamMessage completed successfully')
   }
 
   // Engine-driven response generation using AI layers
@@ -1040,7 +1232,7 @@ export default function ConversationFlow({
                         <div className="w-2 h-2 rounded-full bg-white/20" />
                       </div>
                     </div>
-                    <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-gray-300'}`}>
+                    <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-white'}`}>
                       {user.oneName || 'One'}
                     </span>
                   </div>
@@ -1106,7 +1298,7 @@ export default function ConversationFlow({
                 <div className="flex flex-col max-w-[80%]">
                   {/* User's name and avatar outside bubble */}
                   <div className="flex items-center gap-2 mb-2 mr-1 justify-end">
-                    <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-gray-300'}`}>
+                    <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-white'}`}>
                       {user.name || 'You'}
                     </span>
                     <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-500 to-emerald-500 flex items-center justify-center shadow-sm">
@@ -1190,7 +1382,7 @@ export default function ConversationFlow({
                       <div className="w-2 h-2 rounded-full bg-white/20" />
                     </div>
                   </div>
-                  <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-gray-300'}`}>
+                  <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-white'}`}>
                     {user.oneName || 'One'}
                   </span>
                 </div>
@@ -1199,13 +1391,6 @@ export default function ConversationFlow({
                 <div className={`conversation-bubble ${theme === 'white' ? 'bg-gray-100/80 border-gray-200' : 'bg-white/10 border-white/20'} backdrop-blur-sm border p-4 rounded-2xl shadow-lg`}>
                   <div className="text-sm md:text-base leading-relaxed font-medium" style={{ color: theme === 'white' ? '#000000' : '#ffffff', fontWeight: theme === 'white' ? '500' : '400' }}>
                     {streamingMessage}
-                    <motion.span 
-                      className="inline-block ml-1"
-                      animate={{ opacity: [1, 0, 1] }}
-                      transition={{ duration: 1, repeat: Infinity }}
-                    >
-                      |  
-                    </motion.span>
                   </div>
                 </div>
               </div>
@@ -1256,15 +1441,15 @@ export default function ConversationFlow({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Voice Mode Status Indicator - Above Orb */}
+      {/* Voice Mode Status Indicator - Below Orb */}
       <AnimatePresence>
         {isVoiceMode && (isListening || showListeningIndicator) && !isAISpeaking && !effectiveIsMuted && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none"
-            style={{ marginTop: '-140px' }} // Position above the orb
+            className="fixed inset-x-0 top-1/2 flex justify-center z-20 pointer-events-none"
+            style={{ marginTop: '120px' }} // Position below the orb
           >
             <div className={`px-4 py-2 rounded-full ${theme === 'white' ? 'bg-green-50/90 border-green-200' : 'bg-green-900/30 border-green-500/40'} border backdrop-blur-md shadow-lg`}>
               <div className="flex items-center gap-2">
@@ -1478,16 +1663,21 @@ export default function ConversationFlow({
                 whileHover={{ scale: 1.05, boxShadow: '0 4px 20px rgba(139, 92, 246, 0.3)' }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => {
-                  const newMutedState = !effectiveIsMuted
-                  console.log('🔇 Mute button clicked, new state:', newMutedState)
+                  // Only allow manual mute/unmute when AI is not speaking
+                  if (isAISpeaking) {
+                    console.log('⚠️ Cannot manually control mute while AI is speaking')
+                    return
+                  }
                   
-                  // Always use internal state for mute functionality
-                  setInternalIsMuted(newMutedState)
+                  const newManualMutedState = !manuallyMuted
+                  console.log('🔇 Manual mute button clicked, new state:', newManualMutedState)
                   
-                  // Stop/start voice recognition based on mute state
-                  if (newMutedState) {
-                    // Muted - forcefully stop recognition
-                    console.log('🔇 Muting - stopping all voice recognition')
+                  setManuallyMuted(newManualMutedState)
+                  
+                  // Stop/start voice recognition based on manual mute state
+                  if (newManualMutedState) {
+                    // Manually muted - forcefully stop recognition
+                    console.log('🔇 Manually muting - stopping all voice recognition')
                     if (recognition) {
                       try {
                         recognition.stop()
@@ -1498,23 +1688,31 @@ export default function ConversationFlow({
                     }
                     setIsListening(false)
                     setShowListeningIndicator(false)
-                    console.log('✅ Mute state applied successfully')
+                    console.log('✅ Manual mute state applied successfully')
                   } else {
-                    // Unmuted - restart recognition if in Voice Mode
-                    console.log('🔊 Unmuting - restarting voice recognition')
-                    if (isVoiceMode && recognition) {
-                      try {
-                        recognition.start()
-                        setIsListening(true)
-                        setShowListeningIndicator(true)
-                        console.log('✅ Voice recognition restarted successfully')
-                      } catch (error) {
-                        console.error('❌ Failed to restart recognition:', error)
-                      }
+                    // Manually unmuted - restart recognition if in Voice Mode and AI not speaking
+                    console.log('🔊 Manually unmuting - restarting voice recognition')
+                    if (isVoiceMode && !isAISpeaking) {
+                      // Use the centralized start function to avoid conflicts
+                      setTimeout(() => {
+                        if (!manuallyMuted && !isAISpeakingRef.current) {
+                          startVoiceRecognition()
+                        }
+                      }, 100)
                     }
                   }
                 }}
-                title={effectiveIsMuted ? "Unmute microphone" : "Mute microphone"}
+                title={
+                  isAISpeaking 
+                    ? "AI is speaking - microphone auto-muted"
+                    : effectiveIsMuted 
+                      ? "Unmute microphone" 
+                      : "Mute microphone"
+                }
+                style={{
+                  cursor: isAISpeaking ? 'not-allowed' : 'pointer',
+                  opacity: isAISpeaking ? 0.7 : 1
+                }}
               >
                 {effectiveIsMuted ? (
                   <MicOff size={24} />

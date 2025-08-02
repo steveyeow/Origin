@@ -12,7 +12,7 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
-export function ThemeProvider({ children, initialTheme = 'space' }: { children: ReactNode, initialTheme?: BackgroundTheme }) {
+export function ThemeProvider({ children, initialTheme = 'white' }: { children: ReactNode, initialTheme?: BackgroundTheme }) {
   const [theme, setTheme] = useState<BackgroundTheme>(initialTheme)
 
   const getTextColor = () => {
@@ -31,7 +31,7 @@ export function ThemeProvider({ children, initialTheme = 'space' }: { children: 
       case 'black':
         return 'bg-black'
       case 'bright':
-        return 'bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500'
+        return 'bg-[#c0c0c0]' // Classic Macintosh gray
       case 'space':
       default:
         return 'bg-black'
@@ -42,7 +42,7 @@ export function ThemeProvider({ children, initialTheme = 'space' }: { children: 
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     
-    // Direct style override for White mode
+    // Direct style override for White mode only
     if (theme === 'white') {
       // Create or update the style element
       let styleEl = document.getElementById('theme-override-styles');

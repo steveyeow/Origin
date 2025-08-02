@@ -46,7 +46,17 @@ export class ElevenLabsService {
       modelId?: string
     }
   ): Promise<ArrayBuffer> {
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId || this.config.voiceId}`
+    const finalVoiceId = voiceId || this.config.voiceId
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${finalVoiceId}`
+    
+    console.log('🎤 ElevenLabs API Request:', {
+      url,
+      voiceId: finalVoiceId,
+      textLength: text.length,
+      textPreview: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
+      hasApiKey: !!this.config.apiKey,
+      apiKeyPreview: this.config.apiKey ? this.config.apiKey.substring(0, 8) + '...' : 'Missing'
+    })
     
     const requestBody = {
       text,
@@ -59,27 +69,62 @@ export class ElevenLabsService {
       }
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Accept': 'audio/mpeg',
-        'Content-Type': 'application/json',
-        'xi-api-key': this.config.apiKey
-      },
-      body: JSON.stringify(requestBody)
-    })
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': this.config.apiKey
+        },
+        body: JSON.stringify(requestBody)
+      })
 
-    if (!response.ok) {
-      throw new Error(`ElevenLabs API error: ${response.status} ${response.statusText}`)
+      console.log('📡 ElevenLabs API Response:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries())
+      })
+
+      if (!response.ok) {
+        let errorMessage = `ElevenLabs API error: ${response.status} ${response.statusText}`
+        
+        try {
+          const errorBody = await response.text()
+          console.error('❌ ElevenLabs API Error Body:', errorBody)
+          errorMessage += ` - ${errorBody}`
+        } catch (e) {
+          console.error('❌ Could not read error response body')
+        }
+        
+        throw new Error(errorMessage)
+      }
+
+      const audioBuffer = await response.arrayBuffer()
+      console.log('✅ Audio buffer received:', {
+        size: audioBuffer.byteLength,
+        sizeKB: Math.round(audioBuffer.byteLength / 1024)
+      })
+      
+      return audioBuffer
+      
+    } catch (error) {
+      const errorObj = error as Error
+      console.error('❌ ElevenLabs synthesizeSpeech failed:', {
+        error: errorObj.message,
+        url,
+        voiceId: finalVoiceId,
+        textLength: text.length
+      })
+      throw errorObj
     }
-
-    return await response.arrayBuffer()
   }
 
   /**
-   * Play synthesized audio
+   * Play audio buffer
    */
-  async playAudio(audioBuffer: ArrayBuffer): Promise<void> {
+  async playAudio(audioBuffer: ArrayBuffer, onStart?: () => void): Promise<void> {
     if (!this.audioContext) {
       throw new Error('AudioContext not initialized')
     }
@@ -107,6 +152,15 @@ export class ElevenLabsService {
           this.isPlaying = false
           resolve()
         }
+        
+        // Call onStart callback when audio actually starts playing
+        if (onStart) {
+          // Use a small timeout to ensure audio has actually started
+          setTimeout(() => {
+            onStart()
+          }, 50)
+        }
+        
         source.start()
       })
     } catch (error) {
@@ -124,11 +178,12 @@ export class ElevenLabsService {
     options?: {
       voiceSettings?: VoiceSettings
       modelId?: string
+      onStart?: () => void
     }
   ): Promise<void> {
     try {
       const audioBuffer = await this.synthesizeSpeech(text, voiceId, options)
-      await this.playAudio(audioBuffer)
+      await this.playAudio(audioBuffer, options?.onStart)
     } catch (error) {
       console.error('Failed to speak text:', error)
       throw error

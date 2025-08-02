@@ -44,45 +44,8 @@ export default function DynamicBackground({
       case 'bright':
         return (
           <div className="fixed inset-0 -z-10">
-            {/* Bright colorful gradient background */}
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500" />
-            
-            {/* Animated color orbs */}
-            <motion.div
-              className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-30"
-              style={{
-                background: 'radial-gradient(circle, rgba(34,197,94,0.8) 0%, rgba(59,130,246,0.6) 50%, rgba(147,51,234,0.8) 100%)'
-              }}
-              animate={{
-                scale: [1, 1.2, 1],
-                x: [0, 50, 0],
-                y: [0, -30, 0],
-              }}
-              transition={{
-                duration: 8,
-                repeat: Infinity,
-                ease: "easeInOut"
-              }}
-            />
-            
-            <motion.div
-              className="absolute bottom-1/4 right-1/4 w-64 h-64 rounded-full opacity-40"
-              style={{
-                background: 'radial-gradient(circle, rgba(245,158,11,0.8) 0%, rgba(239,68,68,0.6) 50%, rgba(168,85,247,0.8) 100%)'
-              }}
-              animate={{
-                scale: [1.2, 0.8, 1.2],
-                x: [0, -40, 0],
-                y: [0, 20, 0],
-              }}
-              transition={{
-                duration: 6,
-                repeat: Infinity,
-                ease: "easeInOut"
-              }}
-            />
-            
-            <BinaryStream />
+            {/* Classic Macintosh desktop background - simple gray */}
+            <div className="absolute inset-0 bg-[#c0c0c0]" />
           </div>
         )
       
@@ -173,6 +136,19 @@ export default function DynamicBackground({
           </div>
         )
       
+      case 'rainbow':
+        return (
+          <div className="fixed inset-0 -z-10">
+            {/* Enhanced Rainbow Background based on user's gradient */}
+            <div className="absolute inset-0" 
+                 style={{
+                   background: 'linear-gradient(180deg, #4F7CFF 0%, #6B9FFF 14%, #87C2FF 28%, #A3E5FF 42%, #BFFFBF 56%, #DFFF9F 70%, #FFFF7F 84%, #FFBF5F 92%, #FF9F7F 100%)'
+                 }} />
+            {/* Subtle overlay for better text readability */}
+            <div className="absolute inset-0 bg-black/5" />
+          </div>
+        )
+      
       default:
         return <SpaceBackground />
     }
@@ -189,8 +165,8 @@ export default function DynamicBackground({
       {renderBackground()}
       
       {/* Universal Spectrum Glow (One's symbol) - visible in all backgrounds */}
-      <div className={`fixed inset-0 flex items-center justify-center z-10 ${
-        isVoiceMode ? 'pointer-events-auto' : 'pointer-events-none'
+      <div className={`fixed inset-0 flex items-center justify-center ${
+        isVoiceMode ? 'z-10 pointer-events-auto' : 'z-0 pointer-events-none'
       }`}>
         <motion.div 
           className={`relative cursor-pointer ${

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-export type BackgroundTheme = 'space' | 'black' | 'bright' | 'white'
+export type BackgroundTheme = 'space' | 'black' | 'bright' | 'white' | 'rainbow'
 
 interface BackgroundSwitcherProps {
   currentTheme: BackgroundTheme
@@ -11,10 +11,11 @@ interface BackgroundSwitcherProps {
 }
 
 const themes = [
+  { id: 'white' as const, name: 'White', color: '#ffffff' },
   { id: 'black' as const, name: 'Black', color: '#000000' },
   { id: 'space' as const, name: 'Space', color: '#1e293b' },
-  { id: 'white' as const, name: 'White', color: '#ffffff' },
-  { id: 'bright' as const, name: 'Bright', color: '#3b82f6' }
+  { id: 'bright' as const, name: 'Retro', color: '#c0c0c0' },
+  { id: 'rainbow' as const, name: 'Rainbow', color: 'linear-gradient(45deg, #4F7CFF, #87C2FF, #BFFFBF, #FFFF7F, #FFBF5F, #FF9F7F)' }
 ]
 
 export default function BackgroundSwitcher({ currentTheme, onThemeChange }: BackgroundSwitcherProps) {
@@ -73,14 +74,18 @@ export default function BackgroundSwitcher({ currentTheme, onThemeChange }: Back
                       : 'bg-white/20 text-white'
                     : currentTheme === 'white' 
                       ? 'text-gray-700 hover:bg-gray-200/50 hover:text-black' 
-                      : 'text-gray-300 hover:bg-white/10 hover:text-white'
+                      : 'text-white hover:bg-white/10 hover:text-white'
                 }`}
                 whileHover={{ x: 2 }}
                 whileTap={{ scale: 0.98 }}
               >
                 <div
                   className="w-3 h-3 rounded-full shadow-inner"
-                  style={{ backgroundColor: theme.color }}
+                  style={{
+                    background: theme.id === 'rainbow' 
+                      ? 'linear-gradient(45deg, #4F7CFF, #87C2FF, #BFFFBF, #FFFF7F, #FFBF5F, #FF9F7F)'
+                      : theme.color
+                  }}
                 />
                 <span>{theme.name}</span>
               </motion.button>

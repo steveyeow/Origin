@@ -34,7 +34,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${firaCode.variable} font-sans antialiased overflow-x-hidden`}
       >
-        <ThemeProvider initialTheme="space">
+        <ThemeProvider initialTheme="white">
           {children}
         </ThemeProvider>
       </body>

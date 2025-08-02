@@ -297,7 +297,7 @@ export default function Home() {
             <ConversationFlow 
               className="h-screen max-w-4xl w-full"
               isMuted={isMuted}
-              voiceService={voiceService || undefined}
+              voiceService={voiceService ?? undefined}
               onVoiceModeChange={(newIsVoiceMode) => {
                 // Update parent state for DynamicBackground visual effects
                 setIsVoiceMode(newIsVoiceMode)

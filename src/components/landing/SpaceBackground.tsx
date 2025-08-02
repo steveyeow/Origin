@@ -20,59 +20,85 @@ export default function SpaceBackground() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
-    }
-
-    resizeCanvas()
-    window.addEventListener('resize', resizeCanvas)
-
-    // Animation loop for background gradients only
-    const animate = () => {
+    // Draw static background once
+    const drawStaticBackground = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       
-      // Create gradient background
+      // Deep space gradient background inspired by real galaxy
       const gradient = ctx.createRadialGradient(
         canvas.width / 2, canvas.height / 2, 0,
         canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) / 2
       )
-      gradient.addColorStop(0, 'rgba(15, 23, 42, 1)') // slate-900
-      gradient.addColorStop(0.4, 'rgba(30, 41, 59, 1)') // slate-800
-      gradient.addColorStop(0.8, 'rgba(15, 23, 42, 1)') // slate-900
-      gradient.addColorStop(1, 'rgba(2, 6, 23, 1)') // darker
+      gradient.addColorStop(0, 'rgba(25, 20, 35, 1)') // Warm center like galaxy core
+      gradient.addColorStop(0.2, 'rgba(20, 15, 40, 1)') // Deep purple-blue
+      gradient.addColorStop(0.4, 'rgba(15, 12, 35, 1)') // Darker blue-purple
+      gradient.addColorStop(0.7, 'rgba(8, 10, 25, 1)') // Deep space blue
+      gradient.addColorStop(1, 'rgba(3, 5, 15, 1)') // Almost black
       
       ctx.fillStyle = gradient
       ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      // Add some colorful nebula effects
+      // Enhanced static nebula effects
+      
+      // Deep space nebula (static)
       const nebulaGradient = ctx.createRadialGradient(
-        canvas.width * 0.3, canvas.height * 0.4, 0,
-        canvas.width * 0.3, canvas.height * 0.4, canvas.width * 0.6
+        canvas.width * 0.25, 
+        canvas.height * 0.3, 0,
+        canvas.width * 0.25, 
+        canvas.height * 0.3, 
+        canvas.width * 0.8
       )
-      nebulaGradient.addColorStop(0, 'rgba(139, 92, 246, 0.1)') // purple
-      nebulaGradient.addColorStop(0.5, 'rgba(59, 130, 246, 0.05)') // blue
+      nebulaGradient.addColorStop(0, 'rgba(120, 80, 200, 0.12)') // Deep purple
+      nebulaGradient.addColorStop(0.3, 'rgba(80, 90, 180, 0.08)') // Purple-blue
+      nebulaGradient.addColorStop(0.6, 'rgba(50, 70, 140, 0.04)') // Dark blue
       nebulaGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
       
       ctx.fillStyle = nebulaGradient
       ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      // Another nebula
+      // Warm galaxy center nebula (static)
       const nebula2 = ctx.createRadialGradient(
-        canvas.width * 0.7, canvas.height * 0.6, 0,
-        canvas.width * 0.7, canvas.height * 0.6, canvas.width * 0.4
+        canvas.width * 0.75, 
+        canvas.height * 0.65, 0,
+        canvas.width * 0.75, 
+        canvas.height * 0.65, 
+        canvas.width * 0.6
       )
-      nebula2.addColorStop(0, 'rgba(236, 72, 153, 0.08)') // pink
-      nebula2.addColorStop(0.5, 'rgba(168, 85, 247, 0.04)') // purple
+      nebula2.addColorStop(0, 'rgba(200, 120, 80, 0.1)') // Warm orange
+      nebula2.addColorStop(0.4, 'rgba(150, 100, 120, 0.06)') // Warm purple
+      nebula2.addColorStop(0.7, 'rgba(100, 80, 140, 0.03)') // Cool purple
       nebula2.addColorStop(1, 'rgba(0, 0, 0, 0)')
       
       ctx.fillStyle = nebula2
       ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      animationRef.current = requestAnimationFrame(animate)
+      // Distant star formation nebula (static)
+      const nebula3 = ctx.createRadialGradient(
+        canvas.width * 0.15, 
+        canvas.height * 0.8, 0,
+        canvas.width * 0.15, 
+        canvas.height * 0.8, 
+        canvas.width * 0.5
+      )
+      nebula3.addColorStop(0, 'rgba(120, 140, 180, 0.08)') // Cool blue-white
+      nebula3.addColorStop(0.5, 'rgba(80, 100, 150, 0.04)') // Deeper blue
+      nebula3.addColorStop(1, 'rgba(0, 0, 0, 0)')
+      
+      ctx.fillStyle = nebula3
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
     }
 
-    animate()
+    const resizeCanvas = () => {
+      canvas.width = window.innerWidth
+      canvas.height = window.innerHeight
+      drawStaticBackground() // Redraw after resize
+    }
+
+    resizeCanvas()
+    window.addEventListener('resize', resizeCanvas)
+    
+    // Draw the static background initially
+    drawStaticBackground()
 
     return () => {
       window.removeEventListener('resize', resizeCanvas)
@@ -148,85 +174,195 @@ export default function SpaceBackground() {
       {/* Additional overlay for depth */}
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-slate-900/20" />
       
+      {/* Distant planets */}
+      <div className="absolute inset-0">
+        {/* Large distant planet */}
+        <motion.div
+          className="absolute w-32 h-32 rounded-full opacity-20 blur-sm"
+          style={{
+            left: '85%',
+            top: '15%',
+            background: 'radial-gradient(circle at 30% 30%, rgba(147, 51, 234, 0.6), rgba(99, 102, 241, 0.4), rgba(59, 130, 246, 0.2))'
+          }}
+          animate={{
+            scale: [1, 1.05, 1],
+            opacity: [0.15, 0.25, 0.15]
+          }}
+          transition={{
+            duration: 20,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+        />
+        
+        {/* Medium planet */}
+        <motion.div
+          className="absolute w-20 h-20 rounded-full opacity-15 blur-sm"
+          style={{
+            left: '10%',
+            top: '70%',
+            background: 'radial-gradient(circle at 40% 20%, rgba(236, 72, 153, 0.5), rgba(168, 85, 247, 0.3), rgba(34, 211, 238, 0.2))'
+          }}
+          animate={{
+            scale: [1, 1.08, 1],
+            opacity: [0.12, 0.2, 0.12]
+          }}
+          transition={{
+            duration: 15,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+        />
+      </div>
+      
+      {/* Shooting stars/meteors */}
+      <div className="absolute inset-0">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <motion.div
+            key={`meteor-${i}`}
+            className="absolute h-0.5 bg-gradient-to-r from-transparent via-white to-transparent opacity-80"
+            style={{
+              width: `${60 + Math.random() * 40}px`,
+              left: `${Math.random() * 100}%`,
+              top: `${Math.random() * 100}%`,
+              transformOrigin: 'left center',
+              rotate: `${-30 + Math.random() * 60}deg`,
+              boxShadow: '0 0 6px rgba(255, 255, 255, 0.8)'
+            }}
+            animate={{
+              x: ['-100px', '100vw'],
+              opacity: [0, 1, 1, 0]
+            }}
+            transition={{
+              duration: 2 + Math.random() * 3,
+              repeat: Infinity,
+              delay: Math.random() * 15,
+              ease: "easeOut"
+            }}
+          />
+        ))}
+      </div>
+      
       {/* Enhanced animated stars with different sizes and colors */}
       <div className="absolute inset-0">
-        {/* Small stars */}
-        {Array.from({ length: 80 }).map((_, i) => (
-          <motion.div
-            key={`small-${i}`}
-            className="absolute rounded-full"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              width: `${Math.random() * 1.5 + 0.5}px`,
-              height: `${Math.random() * 1.5 + 0.5}px`,
-              backgroundColor: i % 5 === 0 ? '#a5f3fc' : i % 7 === 0 ? '#e0e7ff' : '#ffffff',
-              boxShadow: i % 4 === 0 ? '0 0 4px rgba(255, 255, 255, 0.8)' : 'none',
-            }}
-            animate={{
-              opacity: [0.2, 0.8, 0.2],
-              scale: [0.6, 1, 0.6],
-            }}
-            transition={{
-              duration: 2 + Math.random() * 4,
-              repeat: Infinity,
-              delay: Math.random() * 3,
-              ease: "easeInOut"
-            }}
-          />
-        ))}
+        {/* Small stars with enhanced colors */}
+        {Array.from({ length: 120 }).map((_, i) => {
+          const starColors = [
+            '#ffffff', // white
+            '#a5f3fc', // cyan
+            '#e0e7ff', // indigo
+            '#fde68a', // amber
+            '#fbb6ce', // pink
+            '#c7d2fe', // indigo-light
+            '#a7f3d0', // emerald
+          ]
+          const color = starColors[i % starColors.length]
+          const size = Math.random() * 1.5 + 0.5
+          
+          return (
+            <motion.div
+              key={`small-${i}`}
+              className="absolute rounded-full"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                backgroundColor: color,
+                boxShadow: i % 3 === 0 ? `0 0 ${size * 2}px ${color}80` : 'none',
+              }}
+              animate={{
+                opacity: [0.3, 1, 0.3],
+                scale: [0.7, 1.2, 0.7],
+              }}
+              transition={{
+                duration: 1.5 + Math.random() * 4,
+                repeat: Infinity,
+                delay: Math.random() * 5,
+                ease: "easeInOut"
+              }}
+            />
+          )
+        })}
         
-        {/* Medium stars with glow */}
-        {Array.from({ length: 20 }).map((_, i) => (
-          <motion.div
-            key={`medium-${i}`}
-            className="absolute rounded-full"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              width: `${Math.random() * 2 + 1.5}px`,
-              height: `${Math.random() * 2 + 1.5}px`,
-              backgroundColor: i % 3 === 0 ? '#93c5fd' : i % 2 === 0 ? '#fcd34d' : '#ffffff',
-              boxShadow: `0 0 ${Math.random() * 4 + 3}px rgba(255, 255, 255, 0.8)`,
-            }}
-            animate={{
-              opacity: [0.4, 1, 0.4],
-              scale: [0.8, 1.2, 0.8],
-            }}
-            transition={{
-              duration: 3 + Math.random() * 5,
-              repeat: Infinity,
-              delay: Math.random() * 2,
-              ease: "easeInOut"
-            }}
-          />
-        ))}
+        {/* Medium stars with enhanced glow */}
+        {Array.from({ length: 30 }).map((_, i) => {
+          const mediumColors = [
+            '#93c5fd', // blue
+            '#fcd34d', // yellow
+            '#ffffff', // white
+            '#f472b6', // pink
+            '#34d399', // emerald
+            '#a78bfa', // violet
+            '#fb7185', // rose
+          ]
+          const color = mediumColors[i % mediumColors.length]
+          const size = Math.random() * 2.5 + 2
+          
+          return (
+            <motion.div
+              key={`medium-${i}`}
+              className="absolute rounded-full"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                backgroundColor: color,
+                boxShadow: `0 0 ${size * 3}px ${color}60, 0 0 ${size * 6}px ${color}30`,
+              }}
+              animate={{
+                opacity: [0.5, 1, 0.5],
+                scale: [0.8, 1.3, 0.8],
+              }}
+              transition={{
+                duration: 2.5 + Math.random() * 4,
+                repeat: Infinity,
+                delay: Math.random() * 3,
+                ease: "easeInOut"
+              }}
+            />
+          )
+        })}
         
-        {/* Occasional bright flares */}
-        {Array.from({ length: 5 }).map((_, i) => (
-          <motion.div
-            key={`flare-${i}`}
-            className="absolute rounded-full blur-[1px]"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              width: `${Math.random() * 3 + 2}px`,
-              height: `${Math.random() * 3 + 2}px`,
-              backgroundColor: '#ffffff',
-              boxShadow: `0 0 8px rgba(255, 255, 255, 0.9), 0 0 12px rgba(255, 255, 255, 0.5)`,
-            }}
-            animate={{
-              opacity: [0.2, 1, 0.2],
-              scale: [1, 2.5, 1],
-            }}
-            transition={{
-              duration: 4 + Math.random() * 8,
-              repeat: Infinity,
-              delay: Math.random() * 10,
-              ease: "easeInOut"
-            }}
-          />
-        ))}
+        {/* Enhanced bright flares and supernovas */}
+        {Array.from({ length: 8 }).map((_, i) => {
+          const flareColors = [
+            '#ffffff', // white
+            '#60a5fa', // blue
+            '#fbbf24', // amber
+            '#f472b6', // pink
+            '#34d399', // emerald
+            '#a78bfa', // violet
+          ]
+          const color = flareColors[i % flareColors.length]
+          const size = Math.random() * 4 + 3
+          
+          return (
+            <motion.div
+              key={`flare-${i}`}
+              className="absolute rounded-full blur-[0.5px]"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                backgroundColor: color,
+                boxShadow: `0 0 ${size * 4}px ${color}80, 0 0 ${size * 8}px ${color}40, 0 0 ${size * 12}px ${color}20`,
+              }}
+              animate={{
+                opacity: [0.1, 1, 0.1],
+                scale: [0.8, 3, 0.8],
+              }}
+              transition={{
+                duration: 3 + Math.random() * 6,
+                repeat: Infinity,
+                delay: Math.random() * 12,
+                ease: "easeInOut"
+              }}
+            />
+          )
+        })}
       </div>
     </div>
   )
