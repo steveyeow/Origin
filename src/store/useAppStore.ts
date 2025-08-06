@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { ConversationStep } from '../types/engine'
 
 export interface User {
   id?: string
@@ -6,10 +7,28 @@ export interface User {
   oneName?: string
 }
 
+export interface MessageContent {
+  text?: string
+  image?: {
+    url: string
+    prompt: string
+    model: string
+    cost: number
+    metadata?: any
+  }
+  video?: {
+    url: string
+    prompt: string
+    model: string
+    cost: number
+    metadata?: any
+  }
+}
+
 export interface AppState {
   // UI State
   isOnboardingActive: boolean
-  currentStep: 'landing' | 'naming-one' | 'naming-user' | 'scenario'
+  currentStep: ConversationStep
   
   // User State
   user: User
@@ -18,8 +37,10 @@ export interface AppState {
   messages: Array<{
     id: string
     type: 'user' | 'one'
-    content: string
+    content: string | MessageContent
     timestamp: Date
+    thinkingProcess?: string
+    requestId?: string
   }>
   
   // Actions

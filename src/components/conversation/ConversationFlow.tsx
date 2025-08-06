@@ -1,23 +1,57 @@
+/**
+ * CONVERSATION FLOW - MAIN UI COMPONENT
+ * 
+ * PURPOSE: Primary user interface for conversation interactions
+ * RESPONSIBILITY: UI state management, voice/chat modes, message display, user input handling
+ * 
+ * KEY FUNCTIONS:
+ * - Message Management: Displays conversation history and handles new messages
+ * - Voice Mode: Speech recognition, voice synthesis, and voice UI controls
+ * - Chat Mode: Text input, message bubbles, and typing indicators
+ * - Engine Integration: Communicates with OriginEngine for AI responses
+ * - State Synchronization: Manages complex state between parent components
+ * 
+ * INTERACTION MODES:
+ * - Chat Mode: Traditional text-based conversation interface
+ * - Voice Mode: Hands-free voice conversation with visual feedback
+ * 
+ * USAGE: Used by main page and conversation page as the primary conversation interface
+ * DEPENDENCIES: OriginEngine, Auth, Subscription, Voice services, UI components
+ */
+
 'use client'
 
-// Speech Recognition types
+// Speech Recognition types and SVG path type fixes
 declare global {
   interface Window {
     webkitSpeechRecognition: any
     SpeechRecognition: any
+    __GREETING_IN_PROGRESS?: boolean
+    [key: string]: any // Allow dynamic properties for voice processing flags
   }
 }
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Mic, MicOff, Paperclip, Send, User, Brain, Sparkles } from 'lucide-react'
+import { InteractiveScenarioLayer } from '../../engine/layers/interactive-scenario'
 import { useAppStore } from '@/store/useAppStore'
-import { Send, Mic, MicOff, Paperclip, User, Brain, Sparkles } from 'lucide-react'
+import { useSubscriptionStore } from '@/store/useSubscriptionStore'
+import { useAuth } from '@/components/auth/AuthProvider'
 import { useThemeContext } from '@/context/ThemeContext'
 import TypewriterText from '@/components/ui/TypewriterText'
-import { OriginXEngine } from '@/engine/core/engine'
-import { OpenAIService } from '@/services/llm/openai-service'
+import ImageDisplay from '@/components/ui/ImageDisplay'
+import UpgradeModal from '@/components/subscription/UpgradeModal'
+import { originEngine, unifiedInvocation } from '@/engine'
 import { ElevenLabsService, DEFAULT_ONE_VOICE_CONFIG, VOICE_PRESETS } from '@/services/voice/elevenlabs-service'
-import type { UserContext, Scenario } from '@/types/engine'
+import type { UserContext, Scenario, Capability } from '@/types/engine'
+import type { MessageContent } from '@/store/useAppStore'
+
+// Custom SVG path component to fix TypeScript errors
+// Using a non-null assertion to handle potential undefined values
+const SVGPath = ({ d, ...props }: { d: string | undefined } & React.SVGProps<SVGPathElement>) => {
+  return <path d={d || ''} {...props} />
+}
 
 // Debug helper to log both to console and terminal
 const debugLog = (message: string, data?: any) => {
@@ -36,51 +70,44 @@ interface ConversationFlowProps {
   className?: string
   isMuted?: boolean
   voiceService?: ElevenLabsService
+  initialVoiceMode?: boolean
+  // Flag to skip the initial greeting message (default: false)
+  skipInitialGreeting?: boolean
   // Callback to notify parent of Voice Mode changes
   onVoiceModeChange?: (isVoiceMode: boolean) => void
 }
 
-// AI-powered conversation engine
-const aiEngine = new OriginXEngine()
-const llmService = new OpenAIService()
-
-// Helper function to create user context
-const createUserContext = (user: any): UserContext => {
-  const now = new Date()
-  const timeOfDay = now.getHours() < 12 ? 'morning' : 
-                   now.getHours() < 17 ? 'afternoon' : 
-                   now.getHours() < 21 ? 'evening' : 'night'
-  
-  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
-  
-  return {
-    userId: user.id || 'anonymous',
-    sessionId: `session_${Date.now()}`,
-    name: user.name || '',
-    currentStep: 'completed',
-    timeContext: {
-      timeOfDay,
-      dayOfWeek,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-    },
-    emotionalState: {
-      mood: 'curious',
-      energy: 'medium',
-      creativity: 'high'
-    },
-    preferences: {
-      communicationStyle: 'casual',
-      creativityLevel: 'balanced',
-      contentTypes: ['text', 'image']
-    },
-    recentInteractions: []
-  }
+// Define response type for better type checking
+interface EnhancedEngineResponse {
+  content: string;
+  followUp: string | null;
+  scenario?: Scenario | undefined;
+  capabilities?: Capability[] | undefined;
+  capabilityResponse: {
+    type: string;
+    result: any;
+    cost: number;
+  } | null;
+  requestId: string;
+  thinkingProcess: string;
+  // Add nextStep property to match engine response
+  nextStep?: 'landing' | 'naming-one' | 'naming-user' | 'scenario' | 'completed';
 }
+
+// ARCHITECTURE FIX: Remove direct OpenAI service instantiation
+// All LLM interactions should go through the Engine
+
+// REMOVED: Duplicate createUserContext function
+// STATE MANAGEMENT FIX: Use ISL's createUserContext instead to maintain single source of truth
+// Access via: originEngine.getScenarioLayer().createUserContext(userId)
+// This prevents state conflicts between UI and engine layers
 
 export default function ConversationFlow({ 
   className = '',
   isMuted = false,
   voiceService,
+  initialVoiceMode = false,
+  skipInitialGreeting = false,
   onVoiceModeChange
 }: ConversationFlowProps) {
   // CRITICAL DEBUG: Check props at component start
@@ -89,6 +116,7 @@ export default function ConversationFlow({
     isMuted,
     voiceService: !!voiceService,
     voiceServiceType: voiceService?.constructor?.name,
+    initialVoiceMode,
     onVoiceModeChange: !!onVoiceModeChange
   })
   
@@ -103,6 +131,15 @@ export default function ConversationFlow({
     addMessage,
     setOnboardingActive
   } = useAppStore()
+  
+  // Auth and subscription state
+  const { user: authUser, canUseVoice, getVoiceCredits } = useAuth()
+  const { 
+    canUseVoice: subscriptionCanUseVoice, 
+    incrementVoiceUsage, 
+    setShowUpgradeModal,
+    getRemainingVoiceCredits 
+  } = useSubscriptionStore()
 
   const [inputValue, setInputValue] = useState('')
   const [isTyping, setIsTyping] = useState(false)
@@ -111,14 +148,19 @@ export default function ConversationFlow({
   const [currentScenario, setCurrentScenario] = useState<Scenario | null>(null)
   const [thinkingProcess, setThinkingProcess] = useState<string>('')
   const [showThinkingProcess, setShowThinkingProcess] = useState(false)
+  const [messageThinkingStates, setMessageThinkingStates] = useState<{[messageId: string]: boolean}>({})
   
   // SIMPLIFIED: Only internal Voice Mode states
   const [isListening, setIsListening] = useState(false)
-  const [isVoiceMode, setIsVoiceMode] = useState(false)
+  const [isVoiceMode, setIsVoiceMode] = useState(initialVoiceMode)
   const [isAISpeaking, setIsAISpeaking] = useState(false) // Track AI speech state
   const [streamingMessage, setStreamingMessage] = useState('')
   const [internalIsMuted, setInternalIsMuted] = useState(false)
   const [manuallyMuted, setManuallyMuted] = useState(false) // Track manual mute state
+  
+  // CRITICAL: State restoration flags - must be declared early
+  const [isRestoringState, setIsRestoringState] = useState(false)
+  const [hasRestoredState, setHasRestoredState] = useState(false)
   
   // Effective mute state: manually muted OR AI is speaking
   const effectiveIsMuted = manuallyMuted || isAISpeaking
@@ -164,11 +206,140 @@ export default function ConversationFlow({
     console.log('🤖 AI speaking state ref updated:', isAISpeaking)
   }, [isAISpeaking])
   
+  // Track if user ID is ready for greeting generation
+  const [userIdReady, setUserIdReady] = useState(false)
+
+  // Sync authenticated user with app store user
+  useEffect(() => {
+    console.log('🔄 Checking user state:', { authUser, currentUser: user })
+    
+    // Generate a fallback user ID if none exists
+    if (!user.id) {
+      const fallbackId = 'user-' + Math.random().toString(36).substring(2, 15)
+      console.log('🔄 Creating fallback user ID:', fallbackId)
+      
+      // First try to use auth user if available
+      if (authUser && authUser.sub) {
+        console.log('🔄 Using authenticated user ID:', authUser.sub)
+        setUser({
+          id: authUser.sub,
+          name: authUser.name || ''
+        })
+      } else {
+        // Otherwise use fallback ID
+        console.log('🔄 Using fallback user ID:', fallbackId)
+        setUser({
+          id: fallbackId,
+          name: user.name || ''
+        })
+      }
+      // Wait for the next render cycle before setting userIdReady
+      setTimeout(() => {
+        console.log('🔄 Setting userIdReady to true after user ID assignment')
+        setUserIdReady(true)
+      }, 0)
+    } else {
+      // User ID already exists, mark as ready
+      console.log('✅ User ID already exists:', user.id)
+      setUserIdReady(true)
+    }
+  }, [authUser, setUser]) // Removed user dependency to prevent infinite loop
+  
   // Prevent duplicate voice synthesis
   const lastSynthesizedContentRef = useRef('')
   const isSynthesizingRef = useRef(false)
   
   // Voice synthesis service is now passed as prop
+  
+  // Helper function to render message content
+  const renderMessageContent = (content: string | MessageContent, isFirstMessage: boolean = false) => {
+    // Handle string content (legacy)
+    if (typeof content === 'string') {
+      if (isFirstMessage) {
+        return (
+          <p style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}>
+            {content}
+          </p>
+        )
+      } else {
+        return (
+          <TypewriterText 
+            text={content} 
+            speed={30}
+            className="block"
+            style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+          />
+        )
+      }
+    }
+    
+    // Handle rich content
+    const richContent = content as MessageContent
+    
+    return (
+      <div className="space-y-3">
+        {/* Text content */}
+        {richContent.text && (
+          <div>
+            {isFirstMessage ? (
+              <p style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}>
+                {richContent.text}
+              </p>
+            ) : (
+              <TypewriterText 
+                text={richContent.text} 
+                speed={30}
+                className="block"
+                style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+              />
+            )}
+          </div>
+        )}
+        
+        {/* Image content */}
+        {richContent.image && (
+          <div className="mt-3">
+            <ImageDisplay 
+              image={{
+                url: richContent.image.url,
+                prompt: richContent.image.prompt,
+                model: richContent.image.model,
+                cost: richContent.image.cost,
+                metadata: richContent.image.metadata
+              }}
+              mode={isVoiceMode ? 'voice' : 'chat'}
+            />
+          </div>
+        )}
+        
+        {/* Video content */}
+        {richContent.video && (
+          <div className="mt-3">
+            <div className={`rounded-xl overflow-hidden ${
+              theme === 'white' 
+                ? 'bg-gray-50 border border-gray-200' 
+                : 'bg-white/5 border border-white/10'
+            } backdrop-blur-sm shadow-lg`}>
+              <video 
+                src={richContent.video.url} 
+                controls 
+                className="w-full h-auto max-h-64 object-cover"
+              />
+              <div className={`p-3 text-xs ${
+                theme === 'white' ? 'bg-gray-50/80 text-gray-600' : 'bg-white/5 text-white/70'
+              } backdrop-blur-sm`}>
+                <p className="font-medium mb-1">"{richContent.video.prompt}"</p>
+                <div className="flex items-center justify-between">
+                  <span>{richContent.video.model}</span>
+                  <span>${richContent.video.cost.toFixed(3)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
   
   // Audio context for sci-fi sound effects
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null)
@@ -187,17 +358,26 @@ export default function ConversationFlow({
       try {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
         setAudioContext(ctx)
-        console.log('Audio context initialized:', ctx.state)
+        console.log('🔊 Audio context initialized:', ctx.state)
         
         // Try to activate audio context on first user interaction
         const handleFirstInteraction = async () => {
+          console.log('🔊 User interaction detected, attempting to resume audio context...')
           if (ctx.state === 'suspended') {
             try {
               await ctx.resume()
-              console.log('Audio context resumed after user interaction')
+              console.log('✅ Audio context resumed after user interaction')
+              
+              // Test sound effect after resume
+              setTimeout(() => {
+                console.log('🔊 Testing sound effect after audio context resume...')
+                playSciFiSound('listening-start')
+              }, 100)
             } catch (error) {
-              console.log('Failed to resume audio context:', error)
+              console.error('❌ Failed to resume audio context:', error)
             }
+          } else {
+            console.log('✅ Audio context already running')
           }
           // Remove listeners after first interaction
           document.removeEventListener('click', handleFirstInteraction)
@@ -206,8 +386,10 @@ export default function ConversationFlow({
         
         document.addEventListener('click', handleFirstInteraction)
         document.addEventListener('touchstart', handleFirstInteraction)
+        
+        console.log('✅ Audio context event listeners added')
       } catch (error) {
-        console.log('Audio context not available:', error)
+        console.error('❌ Audio context not available:', error)
       }
     }
   }, [])
@@ -215,15 +397,23 @@ export default function ConversationFlow({
   // Sci-fi sound effects
   const playSciFiSound = async (type: 'listening-start' | 'listening-end' | 'ai-start') => {
     try {
+      console.log('🔊 Attempting to play sci-fi sound:', type)
+      
       // Ensure audio context is resumed (required for user interaction)
       if (audioContext && audioContext.state === 'suspended') {
+        console.log('🔊 Resuming suspended audio context...')
         await audioContext.resume()
       }
       
       if (!audioContext || audioContext.state !== 'running') {
-        console.log('Audio context not available or not running')
+        console.log('❌ Audio context not available or not running:', {
+          hasContext: !!audioContext,
+          state: audioContext?.state
+        })
         return
       }
+      
+      console.log('✅ Audio context ready, creating sound effect...')
       
       const oscillator = audioContext.createOscillator()
       const gainNode = audioContext.createGain()
@@ -232,26 +422,28 @@ export default function ConversationFlow({
       gainNode.connect(audioContext.destination)
       
       if (type === 'listening-start') {
-        // Rising sci-fi tone for listening start
+        // Rising sci-fi tone for listening start - increased volume
         oscillator.frequency.setValueAtTime(200, audioContext.currentTime)
         oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.3)
-        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime)
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime) // Increased from 0.1
         gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3)
         oscillator.start(audioContext.currentTime)
         oscillator.stop(audioContext.currentTime + 0.3)
-        console.log('🔊 Playing listening-start sound')
+        console.log('🔊 Playing listening-start sound (volume: 0.3)')
       } else if (type === 'ai-start') {
-        // Deep sci-fi tone for AI speaking
+        // Deep sci-fi tone for AI speaking - increased volume
         oscillator.frequency.setValueAtTime(150, audioContext.currentTime)
         oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 0.4)
-        gainNode.gain.setValueAtTime(0.08, audioContext.currentTime)
+        gainNode.gain.setValueAtTime(0.25, audioContext.currentTime) // Increased from 0.08
         gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4)
         oscillator.start(audioContext.currentTime)
         oscillator.stop(audioContext.currentTime + 0.4)
-        console.log('🔊 Playing ai-start sound')
+        console.log('🔊 Playing ai-start sound (volume: 0.25)')
       }
+      
+      console.log('✅ Sci-fi sound effect created and started successfully')
     } catch (error) {
-      console.log('Sound effect failed:', error)
+      console.error('❌ Sound effect failed:', error)
     }
   }
 
@@ -266,43 +458,283 @@ export default function ConversationFlow({
   const [hasAskedForName, setHasAskedForName] = useState(false)
   const [hasProposedScenario, setHasProposedScenario] = useState(false)
 
-  // Use a ref to track initialization state to prevent duplicate messages
+  // Use both ref and state to track initialization to prevent duplicate messages
   const isInitializedRef = useRef(false)
-
+  const greetingRequestSentRef = useRef(false)
+  const greetingResponseReceivedRef = useRef(false)
+  
+  // CRITICAL FIX: Use a global variable to prevent multiple instances from initializing
   useEffect(() => {
-    // Initialize conversation when entering naming-one step
-    if (currentStep === 'naming-one' && !isInitializedRef.current) {
+    if (window.__GREETING_INITIALIZED) {
+      console.log('⚠️ Another instance already initialized greeting - preventing duplicate')
       isInitializedRef.current = true
-      setHasInitialized(true)
-      
-      // Add initial greeting message when conversation starts
-      addMessage({
-        type: 'one',
-        content: "Hi traveler, welcome to Origin, your generative universe that thinks, feels, creates with you. I'm One, your navigator. Would you like to give me a new name?"
-      })
+      greetingRequestSentRef.current = true
+      greetingResponseReceivedRef.current = true
     }
-  }, [currentStep, addMessage])
+  }, [])
+  // Reset initialization when starting a new conversation
+  useEffect(() => {
+    if (messages.length === 0) {
+      console.log('🔄 No messages detected - resetting initialization state for new conversation')
+      isInitializedRef.current = false
+      greetingRequestSentRef.current = false
+      greetingResponseReceivedRef.current = false
+    }
+  }, [messages.length])
+
+  // CRITICAL: Initial greeting generation - only for truly new conversations
+  // This manages the first AI greeting when starting a new conversation
+  useEffect(() => {
+    // CRITICAL: Prevent greeting trigger during state restoration or mode switches
+    if (isRestoringState) {
+      console.log('🚫 Skipping greeting trigger - state restoration in progress')
+      return
+    }
+    
+    // CRITICAL: Check if this is a mode switch by looking for saved conversation state
+    const savedStateString = sessionStorage.getItem('conversationState')
+    if (savedStateString) {
+      console.log('🚫 Skipping greeting trigger - mode switch detected (saved state exists)')
+      return
+    }
+    
+    // CRITICAL FIX: Skip initialization entirely if skipInitialGreeting is true OR if global flag is set
+    // This prevents duplicate greetings when coming from page.tsx or when another instance has already initialized
+    if (skipInitialGreeting || window.__GREETING_INITIALIZED) {
+      console.log('⏭️ Skipping initial greeting - already handled elsewhere', {
+        skipInitialGreeting,
+        globalFlagSet: !!window.__GREETING_INITIALIZED
+      })
+      isInitializedRef.current = true // Mark as initialized to prevent future attempts
+      greetingRequestSentRef.current = true
+      greetingResponseReceivedRef.current = true
+      return
+    }
+    
+    console.log('🔍 Checking greeting conditions:', {
+      messagesLength: messages.length,
+      skipInitialGreeting,
+      userIdReady,
+      hasRestoredState
+    })
+    
+    // Define needsGreeting variable to track if greeting should be triggered
+    // CRITICAL: Check for ANY voice processing in progress to prevent race conditions
+    const hasActiveVoiceProcessing = Object.keys(window).some(key => key.startsWith('voice_processing_') && window[key] === true);
+    
+    // Enhanced check to prevent greeting during state restoration or voice processing
+    const needsGreeting = messages.length === 0 && 
+                         !skipInitialGreeting && 
+                         userIdReady && 
+                         !hasRestoredState && 
+                         !isRestoringState && 
+                         !hasActiveVoiceProcessing;
+    
+    // Only trigger greeting if we're not restoring state and have no messages
+    if (needsGreeting) {
+      console.log('🎯 Checking if initial greeting should be triggered:', {
+        messagesLength: messages.length,
+        skipInitialGreeting,
+        userIdReady,
+        hasRestoredState,
+        isRestoringState,
+        needsGreeting,
+        greetingInProgress: window.__GREETING_IN_PROGRESS
+      })
+      
+      // Prevent duplicate greetings
+      if (window.__GREETING_IN_PROGRESS) {
+        console.log('⚠️ Greeting already in progress, skipping')
+        return
+      }
+      
+      // Check if we need to initialize
+      const shouldInitialize = (
+        messages.length === 0 &&
+        !isInitializedRef.current &&
+        !greetingRequestSentRef.current &&
+        !greetingResponseReceivedRef.current &&
+        userIdReady && // Only proceed if user ID is ready
+        user.id // Double check user ID exists
+      )
+
+      console.log('🔄 Checking for initialization conditions:', {
+        messagesLength: messages.length,
+        skipInitialGreeting,
+        isInitialized: isInitializedRef.current,
+        greetingRequestSent: greetingRequestSentRef.current,
+        greetingResponseReceived: greetingResponseReceivedRef.current,
+        userIdReady,
+        userId: user.id
+      })
+
+      if (shouldInitialize) {
+        console.log('✅ Triggering initial greeting - first time initialization', {
+          userId: user.id,
+          userIdReady
+        })
+        isInitializedRef.current = true
+        greetingRequestSentRef.current = true
+        
+        // CRITICAL FIX: Set global flag to prevent other instances from initializing
+        window.__GREETING_INITIALIZED = true
+        
+        // Define the greeting generation function
+        const triggerGreeting = async () => {
+        try {
+          console.log('🔄 Starting greeting generation process')
+          setAiThinking(true)
+          window.__GREETING_IN_PROGRESS = true
+          
+          // Get the scenario layer to access user context and step management
+          const scenarioLayer = originEngine.getScenarioLayer()
+          // Ensure we have a valid user ID
+          if (!user || !user.id) {
+            console.error('❌ User ID is undefined, cannot proceed with greeting')
+            setAiThinking(false)
+            window.__GREETING_IN_PROGRESS = false
+            return
+          }
+          
+          // Use consistent user ID approach with null check
+          const userId = user.id || 'mock-user-123'
+          const userContext = scenarioLayer.getUserContext(userId)
+          
+          console.log('🔍 Current user context:', userContext)
+          
+          // Generate the initial greeting through the engine
+          const engineResponse = await originEngine.processUserInput('__INIT__', user.id)
+          
+          console.log('⏭️ First greeting generated but not displayed, waiting for typing effect greeting')
+          console.log('🔍 Engine response:', engineResponse)
+          
+          // Update the UI step state based on the engine's nextStep
+          if (engineResponse.nextStep) {
+            console.log('🔄 Updating UI step state to match engine:', engineResponse.nextStep)
+            setCurrentStep(engineResponse.nextStep)
+          }
+          
+          // Store the greeting message for potential use if no second greeting arrives
+          const greetingMessage = engineResponse.message || "Welcome to Origin! I'm One, your AI guide. What would you like to call me?"
+          
+          // IMPORTANT: Add the greeting message with typing effect
+          console.log('✨ Adding initial greeting message with typing effect')
+          greetingResponseReceivedRef.current = true
+          
+          // CRITICAL FIX: Don't use streaming message for greeting to avoid duplicate display
+          // Instead of using setStreamingMessage, we'll just add the message directly
+          // This prevents the duplicate message that appears and then disappears
+          
+          // Add the message with full content directly
+          addMessage({
+            type: 'one',
+            content: greetingMessage, // Full content immediately
+            requestId: engineResponse.requestId || `greeting_${Date.now()}`
+          })
+          
+          // CRITICAL FIX: Since we removed streaming message, we don't need to clear it
+          // Instead, just handle voice synthesis directly if needed
+          if (isVoiceMode) {
+            console.log('🎤 Initial greeting in voice mode - triggering voice synthesis')
+            try {
+              // CRITICAL: Force voice synthesis regardless of current state
+              // This ensures the initial greeting is always voiced in voice mode
+              const forceVoiceSynthesis = async () => {
+                console.log('🗣️ CRITICAL: Force-voicing initial greeting in voice mode')
+                
+                // CRITICAL FIX: Ensure voice service is initialized before attempting voice synthesis
+                if (!voiceService) {
+                  console.log('⚠️ Voice service not initialized for initial greeting, creating new instance')
+                  // Create voice service with default configuration
+                  const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
+                  const voiceId = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || VOICE_PRESETS.PROFESSIONAL
+                  
+                  if (apiKey) {
+                    try {
+                      const newVoiceService = new ElevenLabsService({
+                        apiKey,
+                        voiceId,
+                        ...DEFAULT_ONE_VOICE_CONFIG
+                      })
+                      setVoiceService(newVoiceService)
+                      console.log('✅ Voice service initialized successfully for initial greeting')
+                      
+                      // Wait a moment to ensure voice service is fully set up
+                      await new Promise(resolve => setTimeout(resolve, 200))
+                      
+                      // Now use the voice service via streamMessage
+                      await streamMessage(greetingMessage)
+                    } catch (error) {
+                      console.error('❌ Failed to initialize voice service for initial greeting:', error)
+                    }
+                  } else {
+                    console.error('❌ No API key available for voice service')
+                  }
+                } else {
+                  // Voice service already exists, use it directly
+                  console.log('✅ Using existing voice service for initial greeting')
+                  await streamMessage(greetingMessage)
+                }
+                
+                console.log('✅ Initial greeting voice synthesis completed')
+                
+                // Start voice recognition after synthesis completes
+                if (!manuallyMuted && !isListening) {
+                  console.log('🎤 Auto-starting voice recognition after initial greeting')
+                  setTimeout(() => startVoiceRecognition(), 300)
+                }
+              }
+              
+              // Execute with a slight delay to ensure voice mode is fully initialized
+              setTimeout(forceVoiceSynthesis, 200)
+            } catch (error) {
+              console.error('❌ Initial greeting voice synthesis failed:', error)
+            }
+          }
+          
+          // Clear the global flag
+          window.__GREETING_IN_PROGRESS = false
+          setAiThinking(false)
+        } catch (error) {
+          console.error('Error generating greeting:', error)
+          window.__GREETING_IN_PROGRESS = false
+          setAiThinking(false)
+        }
+      }
+      
+        triggerGreeting()
+      }
+    }
+  }, [messages.length, skipInitialGreeting, userIdReady, hasRestoredState, isRestoringState]) // Added state restoration flags
+  
+  // REMOVED: Duplicate step-based initialization to prevent multiple greetings
+  // The message-based initialization above is sufficient
+  // TODO: Remove this comment after testing
 
   // Use a ref to track if we've asked for the user's name
   const hasAskedForNameRef = useRef(false)
 
-  // Removed automatic naming-user message generation
-  // All responses are now handled through engine-driven handleConversationStep
+  // REMOVED: Broken greeting code block - greeting is handled in useEffect above
 
   // Use a ref to track if we've proposed a scenario
   const hasProposedScenarioRef = useRef(false)
-
-  // Removed automatic scenario generation to prevent duplicate messages
-  // All responses are now handled through engine-driven handleConversationStep
 
   // AI-powered scenario generation
   const generateAIScenario = async () => {
     try {
       setAiThinking(true)
-      const userContext = createUserContext(user)
+      // ARCHITECTURE FIX: Use Engine as the single entry point, not direct layer access
+      // First get available capabilities through the Engine
+      const engineResponse = await originEngine.processUserInput('Generate a creative scenario for me', user.id || 'anonymous')
       
-      // Generate dynamic scenario using AI
-      const scenario = await llmService.generateDynamicScenario(userContext, [])
+      // Use the scenario from the engine response or create a default one if undefined
+      const scenario = engineResponse.scenario || {
+        title: 'Creative Exploration',
+        description: 'Let\'s explore your creative ideas',
+        prompt: 'What would you like to create today?',
+        tags: ['creative', 'exploration']
+      }
+      
       setCurrentScenario({
         id: `scenario_${Date.now()}`,
         type: 'creative_prompt',
@@ -311,7 +743,7 @@ export default function ConversationFlow({
         prompt: scenario.prompt,
         difficulty: 'intermediate',
         estimatedTime: 25,
-        tags: scenario.tags
+        tags: scenario.tags || ['creative']
       })
       
       setAiThinking(false)
@@ -413,7 +845,7 @@ export default function ConversationFlow({
           }
           
           if (transcript.trim()) {
-            console.log('🎤 Processing voice input as message:', transcript)
+            console.log('🎤 Processing voice input as message:', transcript.trim())
             handleVoiceInput(transcript.trim())
             setVoiceTranscript('')
             // Stop recognition after processing final result
@@ -579,6 +1011,324 @@ export default function ConversationFlow({
     }
   }, [effectiveIsMuted, recognition, isListening])
 
+  // CRITICAL: Sync conversation state with ISL layer on mode switches ONLY
+  useEffect(() => {
+    const syncConversationState = async () => {
+      if (!user.id) {
+        console.log('🔍 Skipping conversation state sync - no user ID')
+        return
+      }
+      
+      try {
+        console.log('🔄 Attempting to sync conversation state with ISL...', {
+          userId: user.id,
+          currentUIStep: currentStep,
+          trigger: 'mode switch'
+        })
+        
+        const scenarioLayer = originEngine.getScenarioLayer()
+        // Use consistent user ID approach with null check
+        const userId = user.id || 'mock-user-123'
+        const storedContext = scenarioLayer.getUserContext(userId)
+        
+        console.log('🔍 Retrieved stored context from ISL:', {
+          storedContext,
+          currentUIStep: currentStep,
+          needsSync: storedContext?.currentStep && storedContext.currentStep !== currentStep
+        })
+        
+        if (storedContext && storedContext.currentStep && storedContext.currentStep !== currentStep) {
+          console.log('🔄 CRITICAL: Syncing conversation state with ISL:', {
+            uiCurrentStep: currentStep,
+            islCurrentStep: storedContext.currentStep,
+            userId: user.id,
+            trigger: 'mode switch - state mismatch detected'
+          })
+          
+          // Update UI state to match ISL state
+          setCurrentStep(storedContext.currentStep as 'landing' | 'naming-one' | 'naming-user' | 'scenario')
+        } else {
+          console.log('✅ Conversation state already in sync or no stored context')
+        }
+      } catch (error) {
+        console.error('❌ Failed to sync conversation state:', error)
+      }
+    }
+    
+    // IMPORTANT: Only sync on mode switches and user ID changes, NOT on currentStep changes
+    // This prevents infinite loops while ensuring state sync on mode switches
+    syncConversationState()
+  }, [initialVoiceMode, user.id]) // Removed currentStep to prevent infinite loops
+  
+  // CRITICAL: Restore conversation state BEFORE any greeting triggers
+  // This must run before the greeting useEffect to prevent context reset
+  useEffect(() => {
+    const restoreState = async () => {
+      // Set flag to prevent greeting trigger during restoration
+      setIsRestoringState(true);
+      const savedStateString = sessionStorage.getItem('conversationState');
+      
+      // Log the saved state string for debugging
+      console.log('🔍 Checking for saved conversation state:', {
+        hasSavedState: !!savedStateString,
+        hasRestoredState,
+        isVoiceMode,
+        userId: user.id
+      });
+      
+      if (savedStateString && !hasRestoredState) {
+        try {
+          const savedState = JSON.parse(savedStateString);
+          console.log('🔄 Restoring conversation state after mode switch:', savedState);
+          
+          // Restore state regardless of messages length to prevent greeting triggers
+          if (savedState.step) {
+            // CRITICAL: First synchronize engine state with saved state BEFORE UI updates
+            // This ensures ISL has the correct context before any voice input processing
+            if (user.id) {
+              try {
+                console.log('🔄 CRITICAL: Performing immediate engine state synchronization FIRST:', {
+                  userId: user.id,
+                  step: savedState.step,
+                  timestamp: new Date().toISOString()
+                });
+                
+                // Get the scenario layer to access full context
+                const scenarioLayer = originEngine.getScenarioLayer();
+                
+                // First get the complete current context to preserve all values
+                // Use consistent user ID approach with null check
+                const userId = user.id || 'mock-user-123';
+                const currentContext = scenarioLayer.getUserContext(userId);
+                
+                console.log('🔍 Current ISL context before sync:', {
+                  currentContext,
+                  willUpdateTo: savedState.step
+                });
+                
+                // Update the step in the engine context
+                await scenarioLayer.updateUserContext(userId, {
+                  ...currentContext,
+                  currentStep: savedState.step,
+                  step: savedState.step // Add for backward compatibility
+                });
+                
+                // Verify the update was successful
+                // Reuse the existing userId variable
+                const verifiedContext = scenarioLayer.getUserContext(userId);
+                console.log('✅ Engine context synchronized with saved state - verification:', {
+                  verifiedStep: verifiedContext?.currentStep,
+                  expectedStep: savedState.step,
+                  success: verifiedContext?.currentStep === savedState.step
+                });
+                
+                // Wait a moment to ensure ISL context update completes
+                await new Promise(resolve => setTimeout(resolve, 50));
+              } catch (error) {
+                console.error('❌ Error synchronizing engine context:', error);
+              }
+            }
+            
+            // Now update UI state after engine state is synchronized
+            // Restore the conversation step
+            setCurrentStep(savedState.step);
+            console.log('✅ Restored conversation step to UI:', savedState.step);
+            
+            // Restore messages with thinking process if available
+            if (savedState.messages && Array.isArray(savedState.messages)) {
+              console.log('✅ Restoring complete messages array with thinking process', {
+                messageCount: savedState.messages.length,
+                hasThinkingProcess: savedState.messages.some(m => m.thinkingProcess)
+              });
+              
+              // Clear existing messages first to avoid duplicates
+              // Then add each saved message with its thinking process
+              if (savedState.messages.length > 0) {
+                // First clear existing messages
+                while (messages.length > 0) {
+                  messages.pop();
+                }
+                
+                // Then add each message with its original properties
+                savedState.messages.forEach(msg => {
+                  addMessage(msg);
+                });
+                
+                console.log('✅ Successfully restored messages with thinking process');
+              }
+            }
+            
+            // Set flag to prevent duplicate restoration
+            setHasRestoredState(true);
+            
+            // CRITICAL: Double-check ISL context after UI updates
+            if (user.id) {
+              try {
+                // Get the scenario layer to verify context
+                const scenarioLayer = originEngine.getScenarioLayer();
+                // Use consistent user ID approach with null check
+                const userId = user.id || 'mock-user-123';
+                const finalContext = scenarioLayer.getUserContext(userId);
+                
+                console.log('🔍 FINAL VERIFICATION - ISL context after restoration:', {
+                  finalStep: finalContext?.currentStep,
+                  uiStep: savedState.step,
+                  match: finalContext?.currentStep === savedState.step
+                });
+                
+                // If there's still a mismatch, force one more update
+                if (finalContext?.currentStep !== savedState.step) {
+                  console.warn('⚠️ Context mismatch detected after restoration - forcing final update');
+                  await scenarioLayer.updateUserContext(userId, {
+                    ...finalContext,
+                    currentStep: savedState.step,
+                    step: savedState.step
+                  });
+                }
+              } catch (error) {
+                console.error('❌ Error in final context verification:', error);
+              }
+            }
+            
+            // Clear the saved state to prevent future incorrect restorations
+            sessionStorage.removeItem('conversationState');
+          }
+          
+          setIsRestoringState(false);
+        } catch (error) {
+          console.error('❌ Error restoring conversation state:', error);
+          setIsRestoringState(false);
+        }
+      } else {
+        setIsRestoringState(false);
+      }
+    };
+    
+    // Run state restoration immediately on component mount and mode changes
+    restoreState();
+  }, [isVoiceMode, user.id]); // Only trigger on mode changes or user changes, not on hasRestoredState
+
+  // End of useEffect
+  
+  // CRITICAL: Sync internal voice mode with parent's initialVoiceMode
+  useEffect(() => {
+    console.log('🎙️ Initial Voice Mode sync effect triggered:', {
+      initialVoiceMode,
+      currentIsVoiceMode: isVoiceMode,
+      recognition: !!recognition,
+      isListening,
+      manuallyMuted,
+      timestamp: new Date().toISOString()
+    })
+    
+    // ALWAYS sync internal state with parent's initialVoiceMode
+    if (initialVoiceMode !== isVoiceMode) {
+      console.log('🔄 CRITICAL: Syncing voice mode state:', { from: isVoiceMode, to: initialVoiceMode })
+      setIsVoiceMode(initialVoiceMode)
+      
+      // CRITICAL FIX: If switching TO voice mode from chat mode, ensure proper initialization
+      if (initialVoiceMode && !isVoiceMode) {
+        console.log('🚀 CRITICAL: Switching from chat to voice mode - full initialization needed')
+        
+        // Reset voice mode states to ensure clean initialization
+        setManuallyMuted(false)
+        setIsListening(false)
+        setShowListeningIndicator(false)
+        
+        // Force voice mode state update immediately
+        setIsVoiceMode(true)
+        
+        // CRITICAL: Ensure the last message is properly voiced when switching to voice mode
+        // This fixes the issue where switching from chat to voice mode doesn't voice messages
+        if (messages.length > 0) {
+          const lastMessage = messages[messages.length - 1]
+          if (lastMessage.type === 'one') {
+            console.log('🗣️ CRITICAL: Voicing last AI message after mode switch:', lastMessage.content)
+            
+            // CRITICAL FIX: Ensure voice service is initialized before attempting to use it
+            // This fixes the issue where voice synthesis doesn't work when switching from chat to voice mode
+            const initializeVoiceService = async () => {
+              // Check if voice service is already initialized
+              if (!voiceService) {
+                console.log('⚠️ Voice service not initialized, creating new instance')
+                // Create voice service with default configuration
+                const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
+                const voiceId = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || VOICE_PRESETS.PROFESSIONAL
+                
+                if (apiKey) {
+                  try {
+                    const newVoiceService = new ElevenLabsService({
+                      apiKey,
+                      voiceId,
+                      ...DEFAULT_ONE_VOICE_CONFIG
+                    })
+                    setVoiceService(newVoiceService)
+                    console.log('✅ Voice service initialized successfully')
+                    
+                    // Wait a moment to ensure voice service is fully set up
+                    await new Promise(resolve => setTimeout(resolve, 200))
+                    
+                    // Now stream the message with the new voice service
+                    streamMessage(lastMessage.content)
+                  } catch (error) {
+                    console.error('❌ Failed to initialize voice service:', error)
+                  }
+                } else {
+                  console.error('❌ No API key available for voice service')
+                }
+              } else {
+                // Voice service already exists, use it directly
+                console.log('✅ Using existing voice service')
+                setTimeout(() => {
+                  streamMessage(lastMessage.content)
+                }, 300)
+              }
+            }
+            
+            // Start the initialization process
+            initializeVoiceService()
+          }
+        }
+        
+        // Schedule voice recognition start with proper delay
+        setTimeout(() => {
+          console.log('🔍 Chat→Voice mode initialization check:', {
+            initialVoiceMode,
+            currentIsVoiceMode: true, // Should be true now
+            recognition: !!recognition,
+            isListening,
+            manuallyMuted,
+            isAISpeaking: isAISpeakingRef.current
+          })
+          
+          if (recognition && !manuallyMuted && !isAISpeakingRef.current && !isListening) {
+            console.log('🎙️ STARTING voice recognition after chat→voice switch')
+            startVoiceRecognition()
+          } else {
+            console.log('⚠️ Cannot start voice recognition after chat→voice switch:', {
+              initialVoiceMode,
+              hasRecognition: !!recognition,
+              manuallyMuted,
+              isAISpeaking: isAISpeakingRef.current,
+              isListening
+            })
+          }
+        }, 500) // Longer delay to ensure state sync completes
+      }
+      
+      // If switching to voice mode from any state, prepare to start recognition
+      else if (initialVoiceMode && recognition && !manuallyMuted && !isAISpeakingRef.current) {
+        console.log('🚀 Voice mode activated - scheduling voice recognition start')
+        setTimeout(() => {
+          if (initialVoiceMode && recognition && !manuallyMuted && !isAISpeakingRef.current && !isListening) {
+            console.log('🎙️ STARTING voice recognition after sync')
+            startVoiceRecognition()
+          }
+        }, 300)
+      }
+    }
+  }, [initialVoiceMode]) // Only depend on initialVoiceMode to avoid loops
+  
   // SIMPLIFIED: Auto-manage voice recognition in Voice Mode
   useEffect(() => {
     console.log('🔍 Voice Mode effect triggered:', { 
@@ -715,66 +1465,236 @@ export default function ConversationFlow({
   }
 
   // Handle voice input - Use same logic as handleSubmit
+  // Handle voice input with proper TypeScript typing
   const handleVoiceInput = async (transcript: string) => {
-    console.log('🎤 handleVoiceInput called with:', { 
-      transcript, 
-      transcriptLength: transcript.length,
-      currentStep, 
-      'currentVoiceMode': isVoiceMode
-    })
-  
-    if (!transcript.trim()) {
-      console.log('❌ Empty transcript, returning')
-      return
+    // Ignore empty transcripts
+    if (!transcript.trim()) return
+    
+    console.log(`🎙️ Voice input received: "${transcript}"`)
+    
+    // Generate unique request ID for voice input
+    const requestId = `voice_${Date.now()}`
+    console.log(`🎤 Voice request ${requestId} started for input: "${transcript}"`)
+    
+    // Set a flag to indicate voice input processing is in progress
+    // This helps prevent race conditions with other async operations
+    const voiceProcessingKey = `voice_processing_${requestId}`
+    // Use a safer approach to set window properties
+    if (typeof window !== 'undefined') {
+      (window as Record<string, boolean>)[voiceProcessingKey] = true
     }
-  
-    console.log('✅ Processing voice input as message:', transcript.trim())
+    
+    // CRITICAL: Get ISL context BEFORE processing any input
+    // This ensures we process with the correct step regardless of UI state
+    let actualCurrentStep = currentStep
+    let synced = false
+    
+    // CRITICAL FIX: Always use the same user ID that was used for state restoration
+    // This ensures we find the correct context that was saved during mode switches
+    // IMPORTANT: This MUST match the user ID used in state restoration (line ~1070)
+    const userId = user.id || 'mock-user-123' // Use mock-user-123 as fallback instead of 'anonymous'
+    console.log(`🔑 Voice Input - Using user ID for context retrieval: ${userId}`)
     
     try {
-      // Use the EXACT same logic as handleSubmit for consistency
-      const userInput = transcript.trim()
+      // Use the proper method to get ISL context - getScenarioLayer().getUserContext()
+      const scenarioLayer = originEngine.getScenarioLayer()
+      const islContext = scenarioLayer.getUserContext(userId)
+      console.log('🔍 Voice Input - Retrieved ISL context:', islContext, { userId })
       
-      // Add user message to conversation history
-      console.log('📝 Adding user message to conversation')
-      addMessage({
-        type: 'user',
-        content: userInput
+      if (islContext && islContext.currentStep) {
+        // If ISL has a different step than UI, use ISL's step as source of truth
+        if (islContext.currentStep !== currentStep) {
+          console.log('⚠️ Voice Input - Step mismatch detected:', { 
+            uiStep: currentStep, 
+            islStep: islContext.currentStep,
+            userId
+          })
+          actualCurrentStep = islContext.currentStep
+          // Update UI state to match ISL state immediately
+          setCurrentStep(islContext.currentStep as 'landing' | 'naming-one' | 'naming-user' | 'scenario')
+          synced = true
+        } else {
+          console.log('✅ Voice Input - Steps already in sync:', actualCurrentStep)
+        }
+      } else {
+        console.log('⚠️ Voice Input - No ISL context found, using UI step:', actualCurrentStep, { userId })
+      }
+    } catch (error) {
+      console.error('❌ Voice Input - Error retrieving ISL context:', error)
+      console.log('⚠️ Voice Input - Falling back to UI step:', actualCurrentStep)
+    }
+    
+    // Ensure state update completes if we had to sync
+    // This prevents race conditions where UI state hasn't updated before processing continues
+    if (synced) {
+      console.log(`⏱️ Voice input ${requestId} waiting for state sync to complete...`)
+      // Increased timeout to ensure React state updates complete
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // Double-check that the sync was successful
+      const verificationContext = await originEngine.getScenarioLayer().getUserContext(userId)
+      console.log('🔍 Voice Input - Verification after sync:', {
+        uiStep: currentStep,
+        actualStep: actualCurrentStep,
+        islStep: verificationContext?.currentStep,
+        syncSuccessful: verificationContext?.currentStep === actualCurrentStep
       })
-      console.log('✅ User message added successfully')
       
-      // Clear voice transcript immediately
-      setVoiceTranscript('')
+      // If sync failed, try one more time with longer timeout
+      if (verificationContext?.currentStep !== actualCurrentStep) {
+        console.log('⚠️ Voice Input - Sync verification failed, retrying...')
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+    }
+    
+    console.log('🔄 Voice Input - Final context state:', {
+      actualCurrentStep,
+      synced,
+      originalStep: currentStep,
+      userId
+    })
+    
+    // Use the trimmed input consistently
+    const userInput = transcript.trim()
+    
+    // Clear previous thinking process
+    setThinkingProcess('')
+    await new Promise(resolve => setTimeout(resolve, 10))
+    
+    // Add user message to conversation history
+    addMessage({
+      type: 'user',
+      content: userInput,
+      requestId // Track the request ID with the user message
+    })
+    
+    // Let the engine handle conversation logic with synchronized context
+    try {
+      // Create context with the synchronized step and CONSISTENT USER ID
+      const context = {
+        currentStep: actualCurrentStep,
+        step: actualCurrentStep, // Keep for backward compatibility
+        requestId,
+        isVoiceMode: true, // Mark that this request came from voice mode
+        userId: userId, // CRITICAL: Use the same userId that was used to retrieve context
+        timestamp: Date.now() // Add timestamp to help with debugging
+      };
       
-      // Process based on current step using engine-driven approach (SAME AS handleSubmit)
-      if (currentStep === 'naming-one') {
-        const extractedName = await extractName(userInput, true)
-        setUser({ oneName: extractedName })
+      console.log(`🔄 Voice input ${requestId} creating context:`, { 
+        step: context.currentStep,
+        synced: synced,
+        userId: context.userId, // Log userId to verify consistency
+        timestamp: context.timestamp
+      })
+      
+      const response = await generateEngineResponse(userInput, context)
+      
+      // Initialize message content variable
+      let messageContent: string | MessageContent = response.content
+      
+      // Handle capability responses (images, videos)
+      if ('capabilityResponse' in response && response.capabilityResponse) {
+        const capResponse = response.capabilityResponse
         
-        // Generate contextual response for naming step
-        await handleConversationStep(userInput, 'naming-one')
-        setCurrentStep('naming-user')
-        
-      } else if (currentStep === 'naming-user') {
-        const extractedName = await extractName(userInput, false)
-        setUser({ name: extractedName })
-        
-        // Generate contextual response for user naming step and transition to scenario
-        await handleConversationStep(userInput, 'naming-user-complete')
-        setCurrentStep('scenario')
-        
-      } else if (currentStep === 'scenario') {
-        // Use engine-driven response for general conversation
-        await handleConversationStep(userInput, 'scenario')
+        if (capResponse.type === 'image' && capResponse.result) {
+          // Create rich content with image
+          messageContent = {
+            text: response.content,
+            image: {
+              url: capResponse.result.url,
+              prompt: capResponse.result.prompt,
+              model: capResponse.result.model || 'DALL-E 3',
+              cost: capResponse.cost || 0,
+              metadata: capResponse.result.metadata || {}
+            }
+          }
+          console.log('🎨 Added image to message content:', messageContent.image)
+        } else if (capResponse.type === 'video' && capResponse.result) {
+          // Create rich content with video
+          messageContent = {
+            text: response.content,
+            video: {
+              url: capResponse.result.url,
+              prompt: capResponse.result.prompt,
+              model: capResponse.result.model || 'Video Generator',
+              cost: capResponse.cost || 0,
+              metadata: capResponse.result.metadata || {}
+            }
+          }
+          console.log('🎬 Added video to message content:', messageContent.video)
+        }
       }
       
-      console.log('✅ Voice input processing completed successfully')
-    } catch (error) {
-      console.error('❌ Error processing voice input:', error)
-      // Add error message to conversation
+      // Update current scenario if provided in the response
+      if ('scenario' in response && response.scenario) {
+        setCurrentScenario(response.scenario)
+      }
+      
+      // Update the thinking process to ensure it shows the correct step
+      let finalThinkingProcess = response.thinkingProcess || thinkingProcess
+      
+      // If the engine response updated the step, make sure it's reflected in the thinking process
+      if (response.nextStep && !finalThinkingProcess.includes(`Updated conversation step: ${response.nextStep}`)) {
+        const displayStep = response.nextStep === 'completed' ? 'scenario' : response.nextStep
+        finalThinkingProcess += `\n📍 Final conversation step: ${displayStep}`
+      }
+      
+      // Add AI response with rich content support
+      // Use the requestId from the response if available (which came from the engine)
+      const responseRequestId = response.requestId || requestId
+      
+      // Clean up the processing flag before adding the message
+      // This prevents race conditions with other async operations
+      // Use a safer approach to clear window properties
+      if (typeof window !== 'undefined') {
+        (window as Record<string, boolean>)[voiceProcessingKey] = false
+      }
+      console.log(`🧹 Cleaned up voice processing flag: ${voiceProcessingKey}`)
+      
       addMessage({
         type: 'one',
-        content: "I'm sorry, I had trouble processing your voice input. Could you try again?"
+        content: messageContent,
+        thinkingProcess: finalThinkingProcess,
+        requestId: responseRequestId // Use the engine's requestId for better synchronization
       })
+      console.log(`✅ [${responseRequestId}] AI message added to conversation with rich content support`)
+      
+      // Handle Voice Mode features (subtitles and speech synthesis)
+      // Check voice mode state more robustly
+      const currentVoiceMode = isVoiceMode || voiceModeRef.current
+      if (currentVoiceMode) {
+        console.log('✅ Voice Mode confirmed - calling streamMessage')
+        try {
+          await streamMessage(response.content)
+          console.log('✅ streamMessage completed successfully')
+        } catch (streamError) {
+          console.error('❌ streamMessage failed:', streamError)
+        }
+      } else {
+        console.log('⚠️ Voice Mode not active, skipping streamMessage')
+      }
+      
+      console.log(`✅ Voice input ${requestId} processing completed successfully`)
+      
+    } catch (error) {
+      console.error('❌ AI response generation failed:', error)
+      // Fallback to simple response
+      const fallbackResponse = `I heard you say "${userInput}". That's fascinating! Let me help you with that. What would you like to explore or create together?`
+      
+      addMessage({
+        type: 'one',
+        content: fallbackResponse
+      })
+      
+      // Check voice mode state more robustly for fallback response too
+      if (isVoiceMode || voiceModeRef.current) {
+        console.log('✅ Voice Mode confirmed for fallback - calling streamMessage')
+        try {
+          await streamMessage(fallbackResponse)
+        } catch (streamError) {
+          console.error('❌ streamMessage failed for fallback:', streamError)
+        }
+      }
     }
   }
 
@@ -852,9 +1772,26 @@ export default function ConversationFlow({
       playSciFiSound('ai-start')
     }
     
-    if (voiceService) {
+    // Check voice credits before synthesis
+    const hasVoiceCredits = canUseVoice() && subscriptionCanUseVoice()
+    
+    if (voiceService && hasVoiceCredits) {
       debugLog('🎤️ Using provided voiceService for synthesis')
       voiceSynthesisPromise = voiceService.speakText(content, undefined, { onStart: onAudioStart })
+      
+      // Track voice usage after successful synthesis
+      voiceSynthesisPromise.then(() => {
+        incrementVoiceUsage()
+        debugLog('📊 Voice usage incremented')
+      }).catch((error) => {
+        debugLog('❌ Voice synthesis failed:', error)
+      })
+    } else if (voiceService && !hasVoiceCredits) {
+      debugLog('🚫 Voice credits exhausted - showing upgrade modal')
+      setShowUpgradeModal(true)
+      // Still show text content
+      setStreamingMessage(content)
+      playSciFiSound('ai-start')
     } else {
       // Emergency voice service creation
       const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
@@ -931,220 +1868,254 @@ export default function ConversationFlow({
     debugLog('✅ streamMessage completed successfully')
   }
 
-  // Engine-driven response generation using AI layers
-  const generateEngineResponse = async (userInput: string, context: any) => {
-    console.log('🤖 generateEngineResponse started:', { userInput, context, llmReady: llmService.isReady() })
-    
+  // Engine-driven response generation using unified AI system
+  const generateEngineResponse = async (userInput: string, context: any): Promise<EnhancedEngineResponse> => {
     try {
-      setAiThinking(true)
-      setThinkingProcess('')
+      // Check if this is the first user message after the initial greeting
+      // If it's a simple greeting like "hi", "hello", etc., we should avoid generating a duplicate greeting
+      const isFirstUserMessage = messages.filter(msg => msg.type === 'user').length === 1;
+      const isSimpleGreeting = /^(hi|hello|hey|greetings|howdy|hola|hi there|hello there)$/i.test(userInput.trim());
       
-      const userContext = createUserContext(user)
-      console.log('👤 User context created:', userContext)
+      // Get the stored initial greeting if it exists
+      const initialGreetingContent = sessionStorage.getItem('initialGreetingContent');
+      const initialGreetingRequestId = sessionStorage.getItem('initialGreetingRequestId');
+      
+      console.log('🔍 Checking for greeting duplication:', { 
+        isFirstUserMessage, 
+        isSimpleGreeting, 
+        hasStoredGreeting: !!initialGreetingContent,
+        userInput
+      });
+      
+      // Set AI thinking state
+      setAiThinking(true)
+      
+      // Clear any previous thinking process before starting new conversation
+      setThinkingProcess('')
+      // Ensure state update is complete
+      await new Promise(resolve => setTimeout(resolve, 10)) // Ensure state is cleared
+      
+      // Engine will use its own internal user context management
+      // No need to create userContext here as it would override ISL's stored context
+      
+      // Generate a request ID for this interaction or use the one from context
+      const contextRequestId = context.requestId || `req_${Date.now()}`
+      console.log(`🧠 [${contextRequestId}] Starting thinking process for: "${userInput}"`)
+      
+      // If this is the first user message and it's a simple greeting, we should avoid duplicating the welcome message
+      if (isFirstUserMessage && isSimpleGreeting && initialGreetingContent) {
+        console.log('⚠️ Detected first simple greeting from user after initial AI greeting - avoiding duplicate welcome');
+        
+        // Start with a different thinking process for this case
+        let actualThinkingSteps = `👤 Analyzing user input: "${userInput}"\n`;
+        // Log step values for debugging in greeting case
+      console.log('🔍 Context step values (greeting case):', { 
+        currentStep: context.currentStep, 
+        step: context.step,
+        uiCurrentStep: currentStep
+      })
+      // FIX: Use UI state's currentStep when engine context steps are undefined
+      actualThinkingSteps += `📍 Current conversation step: ${context.currentStep || context.step || currentStep || 'unknown'}\n`;
+        actualThinkingSteps += `👤 User context: ${user.name || 'Anonymous'}\n\n`;
+        actualThinkingSteps += '🚀 Detected simple greeting after welcome message\n';
+        actualThinkingSteps += '💬 Preparing personalized response instead of duplicate welcome\n';
+        setThinkingProcess(actualThinkingSteps);
+        
+        // Return a personalized response instead of a duplicate welcome
+        return {
+          content: `Hi there! I'm glad you're here. What would you like to explore or create today?`,
+          followUp: null,
+          scenario: {
+            id: `greeting_${Date.now()}`,
+            type: 'creative_prompt',
+            title: 'Conversation',
+            description: 'General conversation',
+            prompt: 'What would you like to talk about?',
+            difficulty: 'beginner',
+            estimatedTime: 10,
+            tags: ['conversation']
+          },
+          capabilities: [],
+          capabilityResponse: null,
+          requestId: contextRequestId,
+          thinkingProcess: actualThinkingSteps
+        };
+      }
       
       let actualThinkingSteps = ''
-      
-      // Step 1: Interactive Scenario Layer - Generate dynamic scenario
-      actualThinkingSteps += `🎯 Analyzing user input: "${userInput}"\n`
-      actualThinkingSteps += `📍 Current conversation step: ${context.step}\n`
-      actualThinkingSteps += `👤 User context: ${userContext.name || 'Anonymous'} (${userContext.timeContext.timeOfDay})\n\n`
-      setThinkingProcess(actualThinkingSteps)
-      
-      actualThinkingSteps += '🔄 Interactive Scenario Layer: Generating contextual scenario...\n'
-      setThinkingProcess(actualThinkingSteps)
-      
-      console.log('🔄 About to call llmService.generateDynamicScenario...')
-      
-      const scenario = await llmService.generateDynamicScenario(userContext, [])
-      console.log('✅ Scenario generated:', scenario)
-      actualThinkingSteps += `✅ Scenario generated: ${scenario.title || 'General conversation'}\n\n`
-      setThinkingProcess(actualThinkingSteps)
-      
-      // Step 2: Intention Reasoning Layer - Extract and enrich intent
-      actualThinkingSteps += '🧠 Intention Reasoning Layer: Analyzing user intent...\n'
-      setThinkingProcess(actualThinkingSteps)
-      
-      console.log('🧠 About to call llmService.processUserIntent...')
-      const intent = await llmService.processUserIntent(userInput, userContext)
-      console.log('✅ Intent processed:', intent)
-      actualThinkingSteps += `✅ Intent detected: ${intent.primaryGoal || 'general_help'} (confidence: ${intent.confidence || 0.8})\n\n`
-      setThinkingProcess(actualThinkingSteps)
-      
-      // Step 3: Generate contextual response based on engine processing
-      actualThinkingSteps += '💬 Response Generation: Creating contextual response...\n'
-      setThinkingProcess(actualThinkingSteps)
-      
-      console.log('💬 About to call llmService.generateContextualResponse...')
-      // Use LLM service to generate response based on engine analysis
-      const response = await llmService.generateContextualResponse({
-        userInput,
-        intent,
-        scenario,
-        userContext,
-        conversationStep: context.step
+      actualThinkingSteps += `👤 Analyzing user input: "${userInput}"\n`
+      // Use currentStep instead of step for consistency with ISL
+      // IMPORTANT: Log the actual step values for debugging
+      console.log('🔍 Context step values:', { 
+        currentStep: context.currentStep, 
+        step: context.step,
+        uiCurrentStep: currentStep
       })
-      console.log('✅ Response generated:', response)
+      // FIX: Use UI state's currentStep when engine context steps are undefined
+      actualThinkingSteps += `📍 Current conversation step: ${context.currentStep || context.step || currentStep || 'unknown'}\n`
+      actualThinkingSteps += `👤 User context: ${user.name || 'Anonymous'}\n\n`
+      actualThinkingSteps += '🚀 Unified Engine: Processing through all AI layers...\n'
+      setThinkingProcess(actualThinkingSteps)
       
-      actualThinkingSteps += `✅ Response generated (${response.content.length} characters)\n`
-      actualThinkingSteps += `🎯 Response type: ${context.step === 'naming-one' ? 'AI naming' : context.step === 'naming-user-complete' ? 'User greeting' : 'General conversation'}\n`
+      console.log('🚀 About to call originEngine.processUserInput...')
+      
+      // CRITICAL FIX: Use the context's userId if provided, otherwise fall back to user.id or 'mock-user-123'
+      // This ensures consistent user ID usage between handleVoiceInput and generateEngineResponse
+      const effectiveUserId = context.userId || user.id || 'mock-user-123' // Never use 'anonymous' as fallback
+      console.log(`🔑 Using effective user ID for engine call: ${effectiveUserId}`, {
+        contextUserId: context.userId,
+        userIdFromState: user.id,
+        finalUserId: effectiveUserId
+      })
+      
+      // Use the unified engine for complete processing with consistent user ID
+      const engineResponse = await originEngine.processUserInput(userInput, effectiveUserId)
+      console.log('✅ Engine response:', engineResponse)
+      
+      // Use the requestId from the engine response if available, otherwise use the context one
+      const requestId = engineResponse.requestId || contextRequestId
+      console.log(`🆔 Using request ID for engine response: ${requestId}`)
+      
+      // Update currentStep state if nextStep is provided in the engine response
+      if (engineResponse.nextStep) {
+        setCurrentStep(engineResponse.nextStep as 'landing' | 'naming-one' | 'naming-user' | 'scenario')
+        console.log(`🔄 Updated conversation step to: ${engineResponse.nextStep}`)
+        
+        // Update context to reflect the new step
+        context.currentStep = engineResponse.nextStep
+        context.step = engineResponse.nextStep // For backward compatibility
+      }
+      
+      actualThinkingSteps += `✅ Engine processing complete\n`
+      
+      // Update the conversation step based on engine response
+      if (engineResponse.nextStep) {
+        // Use the safe step value for display in thinking process
+        const displayStep = engineResponse.nextStep === 'completed' ? 'scenario' : engineResponse.nextStep
+        actualThinkingSteps += `📍 Updated conversation step: ${displayStep}\n`
+      }
+      
+      actualThinkingSteps += `🏹 Scenario: ${engineResponse.scenario?.title || 'General conversation'}\n`
+      actualThinkingSteps += `💡 Available capabilities: ${engineResponse.availableCapabilities?.length || 0}\n\n`
+      setThinkingProcess(actualThinkingSteps)
+      
+      // Step 2: Get capability suggestions if available
+      if (engineResponse.availableCapabilities && engineResponse.availableCapabilities.length > 0) {
+        actualThinkingSteps += '🔍 Capability Discovery: Found available AI capabilities\n'
+        engineResponse.availableCapabilities.forEach(cap => {
+          actualThinkingSteps += `  • ${cap.name} (${cap.type})\n`
+        })
+        actualThinkingSteps += '\n'
+        setThinkingProcess(actualThinkingSteps)
+      }
+      
+      // Step 3: Check for specific capability requests using engine intelligence
+      let capabilityResponse: {
+        type: string;
+        result: any;
+        cost: number;
+      } | null = null;
+      
+      // Use the engine's content type inference for smarter detection
+      const contentTypeKeywords = {
+        image: ['image', 'picture', 'photo', 'visual', 'artwork', 'illustration', 'draw', 'paint', 'create', 'generate', 'make'],
+        video: ['video', 'animation', 'motion', 'movie', 'clip', 'animate', 'moving']
+      }
+      
+      const inputLower = userInput.toLowerCase()
+      const hasImageKeywords = contentTypeKeywords.image.some(keyword => inputLower.includes(keyword))
+      const hasVideoKeywords = contentTypeKeywords.video.some(keyword => inputLower.includes(keyword))
+      
+      if (hasImageKeywords) {
+        actualThinkingSteps += '🎨 Image Generation: User requested visual content\n'
+        setThinkingProcess(actualThinkingSteps)
+        
+        try {
+          const imageResult = await unifiedInvocation.generateImage(userInput, {
+            userId: user.id || 'anonymous',
+            qualityLevel: 'balanced',
+            maxCost: 0.15
+          })
+          
+          if (imageResult.success) {
+            actualThinkingSteps += `✅ Image generated successfully (cost: $${imageResult.cost.toFixed(3)})\n`
+            capabilityResponse = {
+              type: 'image',
+              result: imageResult.result,
+              cost: imageResult.cost
+            }
+          }
+        } catch (error) {
+          actualThinkingSteps += `❌ Image generation failed: ${error}\n`
+        }
+        setThinkingProcess(actualThinkingSteps)
+      }
+      
+      if (hasVideoKeywords) {
+        actualThinkingSteps += '🎥 Video Generation: User requested video content\n'
+        setThinkingProcess(actualThinkingSteps)
+        
+        try {
+          const videoResult = await unifiedInvocation.generateVideo(userInput, {
+            userId: user.id || 'anonymous',
+            qualityLevel: 'balanced',
+            maxCost: 0.50
+          })
+          
+          if (videoResult.success) {
+            actualThinkingSteps += `✅ Video generated successfully (cost: $${videoResult.cost.toFixed(3)})\n`
+            capabilityResponse = {
+              type: 'video',
+              result: videoResult.result,
+              cost: videoResult.cost
+            }
+          }
+        } catch (error) {
+          actualThinkingSteps += `❌ Video generation failed: ${error}\n`
+        }
+        setThinkingProcess(actualThinkingSteps)
+      }
+      
+      actualThinkingSteps += '💬 Response Finalization: Preparing enhanced response\n'
       setThinkingProcess(actualThinkingSteps)
       
       setAiThinking(false)
+      
+      // Return enhanced response with capability results
+      const response: EnhancedEngineResponse = {
+        content: engineResponse.message || "I'd love to help you with that!",
+        followUp: engineResponse.scenario?.prompt || null,
+        scenario: engineResponse.scenario,
+        capabilities: engineResponse.availableCapabilities,
+        capabilityResponse,
+        requestId, // Include the requestId for UI synchronization
+        thinkingProcess: actualThinkingSteps // Include the thinking process for this specific request
+      }
+      
       console.log('✅ generateEngineResponse completed successfully:', response)
       return response
       
     } catch (error) {
-      console.error('Engine response generation failed:', error)
+      console.error('Unified engine response generation failed:', error)
       setAiThinking(false)
       
-      // Clear thinking process on error
-      setThinkingProcess('')
-      
-      // Fallback to basic response
+      // Return a properly typed error response
       return {
-        content: "I'd love to help you with that. Could you tell me more about what you're looking for?",
-        followUp: null
+        content: "I'm sorry, I encountered an issue processing your request. Could you try again?",
+        followUp: null,
+        capabilityResponse: null,
+        requestId: `error_${Date.now()}`,
+        thinkingProcess: `❌ Error: ${error}`,
+        scenario: undefined,
+        capabilities: undefined
       }
     }
   }
 
-  // Generate engine-driven response for any conversation step
-  const handleConversationStep = async (userInput: string, step: string) => {
-    console.log('🎯 handleConversationStep called:', { 
-      userInput, 
-      step,
-      isVoiceMode
-    })
-    
-    // FORCE SIMPLE RESPONSE FOR TESTING - BYPASS LLM COMPLETELY
-    const simpleResponses = {
-      'naming-one': `Thank you! I'll be happy to be called that. Now, what should I call you? I'd love to know your name so we can have a more personal connection.`,
-      'naming-user-complete': `Perfect! I like that name. And what about you - what would you like me to call you?`,
-      'scenario': `That's interesting! I'd love to help you explore that further. What specifically would you like to create or discuss?`
-    }
-    
-    const fallbackResponse = `I heard you say "${userInput}". That's fascinating! Let me help you with that. What would you like to explore or create together?`
-    
-    const responseContent = simpleResponses[step as keyof typeof simpleResponses] || fallbackResponse
-    
-    console.log('📤 Using simple response:', responseContent.substring(0, 50) + '...')
-    
-    try {
-      // Add AI message to conversation history
-      addMessage({
-        type: 'one',
-        content: responseContent
-      })
-      console.log('✅ AI message added to conversation')
-      
-      // Handle Voice Mode features (subtitles and speech synthesis)
-      // Capture Voice Mode state at the beginning of the function
-      const initialVoiceMode = voiceModeRef.current
-      console.log('🎬 Voice Mode state captured at start:', {
-        timestamp: new Date().toISOString(),
-        initialVoiceMode,
-        isVoiceMode,
-        voiceService: !!voiceService
-      })
-      
-      // Always call streamMessage if we started in Voice Mode
-      if (initialVoiceMode) {
-        console.log('✅ Voice Mode confirmed - calling streamMessage')
-        console.log('📞 Calling streamMessage with content:', responseContent.substring(0, 30) + '...')
-        
-        try {
-          await streamMessage(responseContent)
-          console.log('✅ streamMessage completed successfully')
-        } catch (streamError) {
-          console.error('❌ streamMessage failed:', streamError)
-          throw streamError
-        }
-      } else {
-        console.log('⚠️ Not in Voice Mode - skipping streamMessage')
-      }
-      
-    } catch (error) {
-      console.error('❌ Even simple response failed:', error)
-      // Last resort - try the most basic response
-      const fallbackMsg = `Hello! I heard you say "${userInput}".`
-      addMessage({
-        type: 'one',
-        content: fallbackMsg
-      })
-      await streamMessage(fallbackMsg)
-    }
-  }
 
-  // Extract name from user input using AI or patterns
-  const extractName = async (input: string, isForOne: boolean = false): Promise<string> => {
-    try {
-      // Try AI-powered name extraction first
-      if (llmService.isReady()) {
-        const prompt = isForOne 
-          ? `Extract the name the user wants to give to their AI assistant from this input: "${input}". Return only the name, nothing else. If no clear name is provided, return "One".`
-          : `Extract the user's name from this input: "${input}". Return only the name, nothing else. If no clear name is provided, return "User".`
-        
-        // Use simple name extraction with LLM
-        try {
-          const extractionContext = {
-            userInput: input,
-            intent: { primaryGoal: 'extract_name' },
-            scenario: null,
-            userContext: createUserContext(user),
-            conversationStep: isForOne ? 'naming-one' : 'naming-user'
-          }
-          
-          const response = await llmService.generateContextualResponse(extractionContext)
-          const extractedName = response.content.trim()
-          
-          if (extractedName && extractedName.length > 0 && extractedName !== 'User' && extractedName !== 'One') {
-            return extractedName
-          }
-        } catch (error) {
-          console.log('AI name extraction failed, using pattern matching')
-        }
-      }
-    } catch (error) {
-      console.error('Error extracting name with AI:', error)
-    }
-    
-    // Fallback to simple pattern matching only for very clear cases
-    if (isForOne) {
-      // Only match very explicit naming patterns
-      const explicitPatterns = [
-        /(?:call you|name you|you're|your name is)\s+([A-Z][a-zA-Z]+)/i,
-        /(?:i'll call you|let's call you)\s+([A-Z][a-zA-Z]+)/i
-      ]
-      
-      for (const pattern of explicitPatterns) {
-        const match = input.match(pattern)
-        if (match && match[1]) {
-          return match[1]
-        }
-      }
-      
-      // Single word that's clearly a name (capitalized, not a common word)
-      const commonWords = ['hi', 'hello', 'hey', 'how', 'are', 'you', 'what', 'that', 'this', 'good', 'fine', 'ok', 'okay']
-      if (/^[A-Z][a-zA-Z]+$/.test(input.trim()) && !commonWords.includes(input.trim().toLowerCase())) {
-        return input.trim()
-      }
-    } else {
-      // Handle patterns for user naming
-      const userNamingPatterns = [
-        /(?:call me|name is|i'm|im)\s+([A-Z][a-zA-Z]+)/i,
-        /(?:my name is|i am)\s+([A-Z][a-zA-Z]+)/i
-      ]
-      
-      for (const pattern of userNamingPatterns) {
-        const match = input.match(pattern)
-        if (match && match[1]) {
-          return match[1]
-        }
-      }
-    }
-    
-    return isForOne ? 'One' : 'User'
-  }
+
+  // REMOVED: Duplicate name extraction function - now using centralized version from utils
+  // Use: extractNameFromInput(input, isForAI, context, llmService)
 
 // ...
 
@@ -1155,33 +2126,162 @@ export default function ConversationFlow({
     if (!userInput) return
 
     setInputValue('') // Clear input immediately for better UX
-
+    
+    // Generate unique request ID to prevent thinking process conflicts
+    const requestId = `req_${Date.now()}`
+    console.log(`🎥 [${requestId}] Starting new conversation request for input: "${userInput}"`)
+    
+    // CRITICAL: Sync conversation state with ISL before processing
+    // This ensures chat mode has the most up-to-date step information after mode switches
+    let actualCurrentStep = currentStep
+    
+    // CRITICAL FIX: Use the same user ID approach as handleVoiceInput
+    // This ensures consistent user ID usage across all input handlers
+    const userId = user.id || 'mock-user-123' // Use mock-user-123 as fallback instead of 'anonymous'
+    console.log(`🔑 Chat Input - Using user ID for context retrieval: ${userId}`)
+    
+    try {
+      const scenarioLayer = originEngine.getScenarioLayer()
+      const storedContext = scenarioLayer.getUserContext(userId)
+      if (storedContext && storedContext.currentStep && storedContext.currentStep !== currentStep) {
+        console.log('🔄 CRITICAL: Chat input detected step mismatch, syncing:', {
+          uiCurrentStep: currentStep,
+          islCurrentStep: storedContext.currentStep,
+          userId
+        })
+        // Make sure currentStep is defined before assignment
+        actualCurrentStep = storedContext.currentStep
+        // Update UI state to match ISL state immediately
+        setCurrentStep(storedContext.currentStep as 'landing' | 'naming-one' | 'naming-user' | 'scenario')
+      }
+    } catch (syncError) {
+      console.error('❌ Failed to sync state before chat input:', syncError)
+    }
+    
+    // Clear previous thinking process completely
+    setThinkingProcess('')
+    // Ensure state update is complete
+    await new Promise(resolve => setTimeout(resolve, 50))
+    
     // Add user message
     addMessage({
       type: 'user',
-      content: userInput
+      content: userInput,
+      requestId // Add requestId to user message
     })
-
-    // Process based on current step using engine-driven approach
-    if (currentStep === 'naming-one') {
-      const extractedName = await extractName(userInput, true)
-      setUser({ oneName: extractedName })
+    
+    // Let the engine handle all conversation logic - no manual step management
+    try {
+      // Use AI engine to generate response with thinking process
+      // Create context with synced step information and consistent userId
+      const context = {
+        currentStep: actualCurrentStep,
+        step: actualCurrentStep, // For backward compatibility
+        requestId,
+        userId: userId, // CRITICAL: Include the same userId used for context retrieval
+        timestamp: Date.now() // Add timestamp to help with debugging
+      }
       
-      // Generate contextual response for naming step
-      await handleConversationStep(userInput, 'naming-one')
-      setCurrentStep('naming-user')
+      console.log('🔄 handleSubmit creating context with synced step:', {
+        originalCurrentStep: currentStep,
+        actualCurrentStep,
+        contextStep: context.currentStep,
+        userId: context.userId,
+        requestId,
+        timestamp: context.timestamp
+      })
       
-    } else if (currentStep === 'naming-user') {
-      const extractedName = await extractName(userInput, false)
-      setUser({ name: extractedName })
+      const response = await generateEngineResponse(userInput, context)
       
-      // Generate contextual response for user naming step and transition to scenario
-      await handleConversationStep(userInput, 'naming-user-complete')
-      setCurrentStep('scenario')
+      // Initialize message content variable
+      let messageContent: string | MessageContent = response.content
       
-    } else if (currentStep === 'scenario') {
-      // Use engine-driven response for general conversation
-      await handleConversationStep(userInput, 'scenario')
+      // Handle capability responses (images, videos)
+      if ('capabilityResponse' in response && response.capabilityResponse) {
+        const capResponse = response.capabilityResponse
+        
+        if (capResponse.type === 'image' && capResponse.result) {
+          // Create rich content with image
+          messageContent = {
+            text: response.content,
+            image: {
+              url: capResponse.result.url,
+              prompt: capResponse.result.prompt,
+              model: capResponse.result.model || 'DALL-E 3',
+              cost: capResponse.cost || 0,
+              metadata: capResponse.result.metadata || {}
+            }
+          }
+          console.log('🎨 Added image to message content:', messageContent.image)
+        } else if (capResponse.type === 'video' && capResponse.result) {
+          // Create rich content with video
+          messageContent = {
+            text: response.content,
+            video: {
+              url: capResponse.result.url,
+              prompt: capResponse.result.prompt,
+              model: capResponse.result.model || 'Video Generator',
+              cost: capResponse.cost || 0,
+              metadata: capResponse.result.metadata || {}
+            }
+          }
+          console.log('🎬 Added video to message content:', messageContent.video)
+        }
+      }
+      
+      // Update current scenario if provided in the response
+      if ('scenario' in response && response.scenario) {
+        setCurrentScenario(response.scenario)
+      }
+      
+      // Add AI response with rich content support
+      // Use the requestId from the response if available (which came from the engine)
+      const responseRequestId = response.requestId || requestId
+      
+      // Update the thinking process to ensure it shows the correct step
+      let finalThinkingProcess = response.thinkingProcess || thinkingProcess
+      
+      // If the engine response updated the step, make sure it's reflected in the thinking process
+      if (response.nextStep && !finalThinkingProcess.includes(`Updated conversation step: ${response.nextStep}`)) {
+        const displayStep = response.nextStep === 'completed' ? 'scenario' : response.nextStep
+        finalThinkingProcess += `\n📍 Final conversation step: ${displayStep}`
+      }
+      
+      addMessage({
+        type: 'one',
+        content: messageContent,
+        thinkingProcess: finalThinkingProcess,
+        requestId: responseRequestId // Use the engine's requestId for better synchronization
+      })
+      console.log(`✅ [${responseRequestId}] AI message added to conversation with rich content support`)
+      
+      // Handle Voice Mode features (subtitles and speech synthesis)
+      if (isVoiceMode) {
+        console.log('✅ Voice Mode confirmed - calling streamMessage')
+        try {
+          await streamMessage(response.content)
+          console.log('✅ streamMessage completed successfully')
+        } catch (streamError) {
+          console.error('❌ streamMessage failed:', streamError)
+        }
+      }
+      
+    } catch (error) {
+      console.error('❌ AI response generation failed:', error)
+      // Fallback to simple response
+      const fallbackResponse = `I heard you say "${userInput}". That's fascinating! Let me help you with that. What would you like to explore or create together?`
+      
+      addMessage({
+        type: 'one',
+        content: fallbackResponse
+      })
+      
+      // Check voice mode state more robustly for fallback response too
+      const currentVoiceMode = isVoiceMode || voiceModeRef.current
+      if (currentVoiceMode) {
+        console.log('✅ Voice Mode confirmed for fallback - calling streamMessage')
+        await streamMessage(fallbackResponse)
+      }
     }
   }
 
@@ -1238,16 +2338,21 @@ export default function ConversationFlow({
                   </div>
                   
                   {/* Collapsible thinking process */}
-                  {thinkingProcess && index === messages.length - 1 && (
+                  {message.thinkingProcess && (
                     <div className="mb-2 ml-8">
                       <button
-                        onClick={() => setShowThinkingProcess(!showThinkingProcess)}
+                        onClick={() => {
+                          setMessageThinkingStates(prev => ({
+                            ...prev,
+                            [message.id]: !(prev[message.id] ?? false)
+                          }))
+                        }}
                         className={`text-xs ${theme === 'white' ? 'text-gray-500 hover:text-gray-700' : 'text-gray-400 hover:text-gray-200'} flex items-center gap-1 transition-colors`}
                       >
                         <Brain className="w-3 h-3" />
-                        <span>{showThinkingProcess ? 'Hide' : 'Show'} thinking process</span>
+                        <span>{(messageThinkingStates[message.id] ?? false) ? 'Hide' : 'Show'} thinking process</span>
                         <motion.div
-                          animate={{ rotate: showThinkingProcess ? 180 : 0 }}
+                          animate={{ rotate: (messageThinkingStates[message.id] ?? false) ? 180 : 0 }}
                           transition={{ duration: 0.2 }}
                         >
                           ▼
@@ -1255,7 +2360,7 @@ export default function ConversationFlow({
                       </button>
                       
                       <AnimatePresence>
-                        {showThinkingProcess && (
+                        {(messageThinkingStates[message.id] ?? false) && (
                           <motion.div
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
@@ -1263,7 +2368,7 @@ export default function ConversationFlow({
                             transition={{ duration: 0.3 }}
                             className={`mt-2 p-3 rounded-lg text-xs ${theme === 'white' ? 'bg-gray-50 text-gray-600 border border-gray-200' : 'bg-gray-800/50 text-gray-300 border border-gray-700'} font-mono whitespace-pre-line`}
                           >
-                            {thinkingProcess}
+                            {message.thinkingProcess}
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -1273,18 +2378,7 @@ export default function ConversationFlow({
                   {/* Message bubble */}
                   <div className={`conversation-bubble ml-8 ${theme === 'white' ? 'bg-gray-100/80 border-gray-200' : 'bg-white/10 border-white/20'} backdrop-blur-sm border p-4 rounded-2xl shadow-lg`}>
                     <div className="text-sm md:text-base leading-relaxed font-medium" style={{ color: theme === 'white' ? '#000000' : '#ffffff', fontWeight: theme === 'white' ? '500' : '400' }}>
-                      {messages.indexOf(message) === 0 ? (
-                        <p style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}>
-                          {message.content}
-                        </p>
-                      ) : (
-                        <TypewriterText 
-                          text={message.content} 
-                          speed={30}
-                          className="block"
-                          style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
-                        />
-                      )}
+                      {renderMessageContent(message.content, messages.indexOf(message) === 0)}
                     </div>
                     <div className={`text-xs ${theme === 'white' ? 'text-gray-600' : 'text-white/50'} mt-3`}>
                       {message.timestamp.toLocaleTimeString([], { 
@@ -1296,11 +2390,8 @@ export default function ConversationFlow({
                 </div>
               ) : (
                 <div className="flex flex-col max-w-[80%]">
-                  {/* User's name and avatar outside bubble */}
+                  {/* User avatar only - no name display */}
                   <div className="flex items-center gap-2 mb-2 mr-1 justify-end">
-                    <span className={`text-sm font-medium ${theme === 'white' ? 'text-gray-700' : 'text-white'}`}>
-                      {user.name || 'You'}
-                    </span>
                     <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-500 to-emerald-500 flex items-center justify-center shadow-sm">
                       <User size={12} className="text-white" />
                     </div>
@@ -1309,7 +2400,7 @@ export default function ConversationFlow({
                   {/* Message bubble */}
                   <div className={`conversation-bubble ${theme === 'white' ? 'bg-gray-100/80 border-gray-200' : 'bg-white/10 border-white/20'} backdrop-blur-sm border p-4 rounded-2xl shadow-lg`}>
                     <div className="text-sm md:text-base leading-relaxed font-medium" style={{ color: theme === 'white' ? '#000000' : '#ffffff', fontWeight: theme === 'white' ? '500' : '400' }}>
-                      <p>{message.content}</p>
+                      {renderMessageContent(message.content, false)}
                     </div>
                     <div className={`text-xs ${theme === 'white' ? 'text-gray-600' : 'text-white/50'} mt-3`}>
                       {message.timestamp.toLocaleTimeString([], { 
@@ -1339,9 +2430,8 @@ export default function ConversationFlow({
                   <span className={`text-sm font-medium ${theme === 'white' ? 'text-blue-700' : 'text-blue-300'}`}>
                     {user.oneName || 'One'} is thinking with AI
                   </span>
-                  {llmService.isReady() && (
-                    <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
-                  )}
+                  {/* ARCHITECTURE FIX: Check service status through Engine instead of direct layer access */}
+                  <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
                   <div className="flex space-x-1 ml-2">
                     {[0, 1, 2].map((i) => (
                       <motion.div
@@ -1613,7 +2703,46 @@ export default function ConversationFlow({
               {/* Voice Mode button */}
               <motion.button
                 type="button"
-                onClick={() => setIsVoiceMode(true)}
+                onClick={async () => {
+                  console.log('🎙️ CRITICAL: Switching to Voice Mode - preserving conversation state:', {
+                    currentStep,
+                    messagesCount: messages.length,
+                    userId: user.id
+                  })
+                  
+                  try {
+                    // Get the current engine context to ensure we have the correct state
+                    const scenarioLayer = originEngine.getScenarioLayer()
+                    // Use consistent user ID approach with null check
+                    const userId = user.id || 'mock-user-123'
+                    const engineContext = scenarioLayer.getUserContext(userId)
+                    
+                    // Store complete conversation state before switching modes
+                    const currentConversationState = {
+      step: currentStep || engineContext?.currentStep || engineContext?.step,
+      messagesCount: messages.length,
+      engineStep: engineContext?.currentStep || engineContext?.step,
+      timestamp: new Date().toISOString(),
+      // Save complete messages array with thinking process
+      messages: messages
+    }
+                    
+                    console.log('💾 Saving detailed conversation state before mode switch:', currentConversationState)
+                    sessionStorage.setItem('conversationState', JSON.stringify(currentConversationState))
+                    
+                    // Switch to voice mode
+                    console.log('🎙️ Switching to voice mode with preserved context:', {
+                      step: currentStep,
+                      messagesCount: messages.length,
+                      hasThinkingProcess: messages.some(m => m.thinkingProcess)
+                    })
+                    setIsVoiceMode(true)
+                  } catch (error) {
+                    console.error('❌ Error saving conversation state:', error)
+                    // Still switch modes even if saving state fails
+                    setIsVoiceMode(true)
+                  }
+                }}
                 className={`absolute right-3 bottom-3 p-2 rounded-lg transition-colors ${
                   theme === 'white' 
                     ? 'text-gray-600 hover:bg-gray-200' 
@@ -1624,13 +2753,14 @@ export default function ConversationFlow({
                 title="Enter Voice Mode"
               >
                 {/* Audio wave icon */}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M2 10v4"/>
-                  <path d="M6 6v12"/>
-                  <path d="M10 3v18"/>
-                  <path d="M14 8v8"/>
-                  <path d="M18 5v14"/>
-                  <path d="M22 10v4"/>
+                {/* Audio wave icon */}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M2 10v4" />
+                  <path d="M6 6v12" />
+                  <path d="M10 3v18" />
+                  <path d="M14 8v8" />
+                  <path d="M18 5v14" />
+                  <path d="M22 10v4" />
                 </svg>
               </motion.button>
             </div>
@@ -1730,17 +2860,65 @@ export default function ConversationFlow({
                 }`}
                 whileHover={{ scale: 1.05, boxShadow: '0 4px 20px rgba(139, 92, 246, 0.3)' }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => setIsVoiceMode(false)}
+                onClick={async () => {
+                  console.log('💬 CRITICAL: Switching to Chat Mode - preserving conversation state:', {
+                    currentStep,
+                    messagesCount: messages.length,
+                    userId: user.id
+                  })
+                  
+                  try {
+                    // Get the current engine context to ensure we have the correct state
+                    const scenarioLayer = originEngine.getScenarioLayer()
+                    // Use consistent user ID approach with null check
+                    const userId = user.id || 'mock-user-123'
+                    const engineContext = scenarioLayer.getUserContext(userId)
+                    
+                    // Store complete conversation state before switching modes
+                    const currentConversationState = {
+      step: currentStep || engineContext?.currentStep || engineContext?.step,
+      messagesCount: messages.length,
+      engineStep: engineContext?.currentStep || engineContext?.step,
+      timestamp: new Date().toISOString(),
+      // Save complete messages array with thinking process
+      messages: messages
+    }
+                    
+                    console.log('💾 Saving detailed conversation state before mode switch:', currentConversationState)
+                    sessionStorage.setItem('conversationState', JSON.stringify(currentConversationState))
+                    
+                    // Stop voice recognition before switching modes
+                    if (recognition && isListening) {
+                      try {
+                        recognition.stop()
+                        console.log('✅ Voice recognition stopped before mode switch')
+                      } catch (stopError) {
+                        console.error('❌ Failed to stop voice recognition:', stopError)
+                      }
+                    }
+                    
+                    // Switch to chat mode
+                    setIsVoiceMode(false)
+                  } catch (error) {
+                    console.error('❌ Error saving conversation state:', error)
+                    // Still switch modes even if saving state fails
+                    setIsVoiceMode(false)
+                  }
+                }}
                 title="Exit Voice Mode"
               >
+                {/* Close icon */}
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
                 </svg>
               </motion.button>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+      
+      {/* Upgrade Modal */}
+      <UpgradeModal />
     </div>
   )
 }

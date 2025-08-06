@@ -1,10 +1,23 @@
-import type { Scenario, OnboardingStep } from '../../../types/engine'
-
 /**
- * Onboarding Scenarios
- * These scenarios guide users through the initial experience
+ * SCENARIO DEFINITIONS - CONVERSATION CONTENT
+ * 
+ * PURPOSE: Static scenario definitions for onboarding and general conversation
+ * RESPONSIBILITY: Provides predefined conversation scenarios and prompts
+ * 
+ * KEY COMPONENTS:
+ * - ONBOARDING_SCENARIOS: Step-by-step user onboarding scenarios (naming, introduction)
+ * - GENERAL_SCENARIOS: Post-onboarding conversation scenarios (creative, mood-based)
+ * 
+ * SCENARIO TYPES:
+ * - Onboarding: landing, naming-one, naming-user, scenario completion
+ * - General: creative prompts, mood-based interactions, capability showcases
+ * 
+ * USAGE: Imported by ISL layer for scenario selection and conversation flow
+ * DEPENDENCIES: Engine type definitions only
  */
-export const ONBOARDING_SCENARIOS: Record<OnboardingStep, Scenario[]> = {
+
+import type { Scenario, ConversationStep } from '../../../types/engine'
+export const ONBOARDING_SCENARIOS: Record<ConversationStep, Scenario[]> = {
   landing: [
     {
       id: 'landing_welcome',
@@ -80,10 +93,23 @@ export const ONBOARDING_SCENARIOS: Record<OnboardingStep, Scenario[]> = {
       type: 'creative_prompt',
       title: 'Collaborative Creation',
       description: 'Suggest working together',
-      prompt: "I'm feeling inspired... want to create something amazing together?",
+      prompt: "I'd love to collaborate with you on something. What shall we create together?",
       difficulty: 'beginner',
       estimatedTime: 4,
-      tags: ['collaboration', 'inspiration', 'creative']
+      tags: ['collaboration', 'creative', 'teamwork']
+    }
+  ],
+  
+  completed: [
+    {
+      id: 'onboarding_completed',
+      type: 'onboarding',
+      title: 'Onboarding Completed',
+      description: 'User has completed onboarding',
+      prompt: "Great! Now that we know each other, I'm ready to assist you with whatever you need. What would you like to talk about?",
+      difficulty: 'beginner',
+      estimatedTime: 1,
+      tags: ['onboarding', 'completed', 'welcome']
     },
     {
       id: 'possibility_exploration',
@@ -125,9 +151,7 @@ export const ONBOARDING_SCENARIOS: Record<OnboardingStep, Scenario[]> = {
       estimatedTime: 4,
       tags: ['energy', 'manifestation', 'creative']
     }
-  ],
-  
-  completed: []
+  ]
 }
 
 /**
@@ -295,5 +319,67 @@ export const GENERAL_SCENARIOS: Scenario[] = [
     difficulty: 'advanced',
     estimatedTime: 7,
     tags: ['future', 'vision', 'ideal', 'universal']
+  },
+
+  // Image Generation Scenarios
+  {
+    id: 'visual_imagination',
+    type: 'image_generation',
+    title: 'Visual Imagination',
+    description: 'Transform ideas into stunning visuals',
+    prompt: "I can see images forming in your mind... let's bring one to life! Describe what you'd like me to create visually.",
+    difficulty: 'beginner',
+    estimatedTime: 3,
+    tags: ['image', 'visual', 'imagination', 'creation']
+  },
+  {
+    id: 'artistic_vision',
+    type: 'image_generation',
+    title: 'Artistic Vision',
+    description: 'Create artistic masterpieces',
+    prompt: "What artistic vision is calling to you? I can help you create anything from photorealistic scenes to abstract art!",
+    difficulty: 'intermediate',
+    estimatedTime: 4,
+    tags: ['art', 'artistic', 'masterpiece', 'vision']
+  },
+  {
+    id: 'dream_visualization',
+    type: 'image_generation',
+    title: 'Dream Visualization',
+    description: 'Visualize dreams and fantasies',
+    prompt: "Tell me about a dream, fantasy, or impossible scene you'd love to see. I'll make it real through AI art!",
+    difficulty: 'intermediate',
+    estimatedTime: 5,
+    tags: ['dream', 'fantasy', 'impossible', 'visualization']
+  },
+  {
+    id: 'concept_art',
+    type: 'image_generation',
+    title: 'Concept Art Creation',
+    description: 'Design concepts and characters',
+    prompt: "Ready to design something amazing? Whether it's a character, creature, or concept - let's bring your ideas to visual life!",
+    difficulty: 'advanced',
+    estimatedTime: 6,
+    tags: ['concept', 'design', 'character', 'creature']
+  },
+  {
+    id: 'mood_visualization',
+    type: 'image_generation',
+    title: 'Mood Visualization',
+    description: 'Express emotions through visuals',
+    prompt: "How are you feeling right now? Let's create an image that captures and expresses your current mood or energy!",
+    difficulty: 'beginner',
+    estimatedTime: 3,
+    tags: ['mood', 'emotion', 'expression', 'feeling']
+  },
+  {
+    id: 'story_illustration',
+    type: 'image_generation',
+    title: 'Story Illustration',
+    description: 'Illustrate stories and narratives',
+    prompt: "Do you have a story, scene, or moment you'd like to see illustrated? I can create the perfect visual to accompany your narrative!",
+    difficulty: 'intermediate',
+    estimatedTime: 5,
+    tags: ['story', 'illustration', 'narrative', 'scene']
   }
 ]

@@ -1,4 +1,20 @@
+/**
+ * ISL UTILITY FUNCTIONS - SHARED HELPERS
+ * 
+ * PURPOSE: Centralized utility functions for the Interactive Scenario Layer
+ * RESPONSIBILITY: Reusable helper functions for scenario selection and name processing
+ * 
+ * KEY FUNCTIONS:
+ * - generateScenarioId(): Creates unique identifiers for scenarios
+ * - selectScenarioByContext(): Intelligent scenario selection based on user context
+ * - extractNameFromInput(): AI-powered name extraction from user input
+ * 
+ * USAGE: Imported by ISL layer for scenario management and name processing
+ * DEPENDENCIES: Engine types, OpenAI service for AI-powered name extraction
+ */
+
 import type { Scenario, UserContext } from '../../../types/engine'
+import { OpenAIService } from '../../../services/llm/openai-service'
 
 /**
  * Generate a unique scenario ID
@@ -251,4 +267,103 @@ export function getTimeAppropriateScenarios(scenarios: Scenario[], timeOfDay: st
   return scenarios.filter(scenario => 
     scenario.tags.includes(timeOfDay) || scenario.tags.includes('universal')
   )
+}
+
+/**
+ * Extract name from user input using AI and pattern matching
+ * CENTRALIZED FUNCTION - Single source of truth for name extraction
+ * 
+ * @param input - User input text
+ * @param isForAI - Whether extracting AI name (true) or user name (false)
+ * @param context - User context for AI-powered extraction
+ * @param llmService - OpenAI service instance for AI extraction
+ * @returns Extracted name or fallback ('One' for AI, 'User' for user)
+ */
+export async function extractNameFromInput(
+  input: string, 
+  isForAI: boolean = false, 
+  context?: UserContext, 
+  llmService?: OpenAIService
+): Promise<string> {
+  try {
+    // Try AI-powered name extraction first if OpenAI is available
+    if (llmService && llmService.isReady() && context) {
+      const prompt = isForAI 
+        ? `Extract the name the user wants to give to their AI assistant from this input: "${input}". Return only the name, nothing else. If no clear name is provided, return "One".`
+        : `Extract the user's name from this input: "${input}". Return only the name, nothing else. If no clear name is provided, return "User".`
+      
+      try {
+        const extractionContext = {
+          userInput: input,
+          intent: { primaryGoal: 'extract_name' },
+          scenario: null,
+          userContext: context,
+          conversationStep: isForAI ? 'naming-one' : 'naming-user'
+        }
+        
+        const response = await llmService.generateContextualResponse(extractionContext)
+        const extractedName = response.content.trim()
+        
+        if (extractedName && extractedName.length > 0 && extractedName !== 'User' && extractedName !== 'One') {
+          return extractedName
+        }
+      } catch (error) {
+        console.log('AI name extraction failed, using pattern matching')
+      }
+    }
+  } catch (error) {
+    console.error('Error extracting name with AI:', error)
+  }
+  
+  // Fallback to pattern matching
+  if (isForAI) {
+    // Patterns for AI naming: "how about Tom", "call you Lucy", "Tom"
+    const patterns = [
+      /(?:how about|what about|call you|name you|you're|your name is)\s+([A-Z][a-zA-Z]+)/i,
+      /(?:i'll call you|let's call you)\s+([A-Z][a-zA-Z]+)/i
+    ]
+    
+    for (const pattern of patterns) {
+      const match = input.match(pattern)
+      if (match && match[1]) {
+        return match[1]
+      }
+    }
+    
+    // Single word that's clearly a name (capitalized or lowercase, not a common word)
+    // Remove punctuation like ? ! . from the end
+    const cleanedInput = input.trim().replace(/[?!.,;:]+$/, '')
+    const commonWords = ['hi', 'hello', 'hey', 'how', 'are', 'you', 'what', 'that', 'this', 'good', 'fine', 'ok', 'okay', 'yes', 'no', 'maybe', 'one']
+    
+    if (/^[A-Za-z][a-zA-Z]*$/.test(cleanedInput) && !commonWords.includes(cleanedInput.toLowerCase())) {
+      // Capitalize first letter for consistency
+      return cleanedInput.charAt(0).toUpperCase() + cleanedInput.slice(1)
+    }
+  } else {
+    // Patterns for user naming: "I'm Steve", "call me Steve", "Steve"
+    const patterns = [
+      /(?:call me|name is|i'm|im)\s+([A-Za-z][a-zA-Z]+)/i,
+      /(?:my name is|i am)\s+([A-Za-z][a-zA-Z]+)/i
+    ]
+    
+    for (const pattern of patterns) {
+      const match = input.match(pattern)
+      if (match && match[1]) {
+        // Capitalize first letter for consistency
+        return match[1].charAt(0).toUpperCase() + match[1].slice(1)
+      }
+    }
+    
+    // Single word input that looks like a name (now handles lowercase too)
+    // Remove punctuation like ? ! . from the end
+    const cleanedInput = input.trim().replace(/[?!.,;:]+$/, '')
+    const commonWords = ['hi', 'hello', 'hey', 'how', 'are', 'you', 'what', 'that', 'this', 'good', 'fine', 'ok', 'okay', 'yes', 'no', 'maybe']
+    
+    if (/^[A-Za-z][a-zA-Z]*$/.test(cleanedInput) && !commonWords.includes(cleanedInput.toLowerCase())) {
+      // Capitalize first letter for consistency
+      return cleanedInput.charAt(0).toUpperCase() + cleanedInput.slice(1)
+    }
+  }
+  
+  return isForAI ? 'One' : 'User'
 }

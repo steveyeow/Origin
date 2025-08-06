@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { UserContext, Scenario, EngineResponse, OnboardingStep } from '@/types/engine'
-import { InteractiveScenarioLayer } from '@/engine/layers/interactive-scenario'
+import { UserContext, Scenario, EngineResponse, ConversationStep } from '@/types/engine'
+import { originEngine } from '@/engine'
 
 /**
  * Hook for interacting with the OriginX Engine
@@ -11,13 +11,10 @@ export function useEngine() {
   const [error, setError] = useState<string | null>(null)
   const [currentScenario, setCurrentScenario] = useState<Scenario | null>(null)
   
-  // Engine layer instances
-  const scenarioLayerRef = useRef<InteractiveScenarioLayer>()
+  // Use singleton engine instance
+  const scenarioLayerRef = useRef(originEngine.getScenarioLayer())
   
-  // Initialize engine layers
-  useEffect(() => {
-    scenarioLayerRef.current = new InteractiveScenarioLayer({})
-  }, [])
+  // No initialization needed - using singleton
 
   /**
    * Create initial user context and get first scenario
@@ -77,17 +74,17 @@ export function useEngine() {
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
           }
         }
-        await scenarioLayerRef.current.createUserContext(context)
+        scenarioLayerRef.current.createUserContext(userId)
       }
 
       // Update context to start onboarding
-      await scenarioLayerRef.current.updateUserContext({
+      await scenarioLayerRef.current.updateUserContext(userId, {
         ...context,
         currentStep: 'naming-one'
       })
 
       // Get onboarding scenario
-      const updatedContext = { ...context, currentStep: 'naming-one' as OnboardingStep }
+      const updatedContext = { ...context, currentStep: 'naming-one' as ConversationStep }
       const scenario = await scenarioLayerRef.current.getOnboardingScenario('naming-one', updatedContext)
       setCurrentScenario(scenario)
       

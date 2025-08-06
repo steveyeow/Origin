@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import { Inter, Fira_Code } from "next/font/google";
+import { Space_Grotesk, Fira_Code } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { AuthProvider } from '@/components/auth/AuthProvider';
 
-const inter = Inter({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-space-grotesk",
   display: "swap",
 });
 
@@ -32,11 +33,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${inter.variable} ${firaCode.variable} font-sans antialiased overflow-x-hidden`}
+        className={`${spaceGrotesk.variable} ${firaCode.variable} font-sans antialiased overflow-x-hidden`}
       >
-        <ThemeProvider initialTheme="white">
-          {children}
-        </ThemeProvider>
+        <AuthProvider>
+          <ThemeProvider initialTheme="white">
+            {children}
+          </ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );

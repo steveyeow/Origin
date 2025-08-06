@@ -18,8 +18,19 @@ export class CapabilityRegistry extends EventEmitter {
    * Register a new capability
    */
   async registerCapability(capability: Capability): Promise<void> {
-    // Validate capability
-    this.validateCapability(capability)
+    // Validate capability - this may return early if capability already exists
+    try {
+      this.validateCapability(capability)
+    } catch (error) {
+      console.error(`❌ Failed to validate capability ${capability.id}:`, error)
+      throw error
+    }
+    
+    // If capability already exists (validateCapability returned early), don't proceed
+    if (this.capabilities.has(capability.id)) {
+      console.log(`⚠️ Skipping registration for existing capability: ${capability.id}`)
+      return
+    }
     
     // Store capability
     this.capabilities.set(capability.id, capability)
@@ -28,7 +39,7 @@ export class CapabilityRegistry extends EventEmitter {
     // Emit event
     this.emit('capability_added', capability)
     
-    console.log(`Capability registered: ${capability.name} (${capability.type})`)
+    console.log(`✅ Capability registered: ${capability.name} (${capability.type})`)
   }
 
   /**
@@ -170,8 +181,12 @@ export class CapabilityRegistry extends EventEmitter {
       throw new Error('Capability must have id, name, and type')
     }
     
+    // Check for duplicate capability - but don't throw an error, just log a warning
+    // This prevents crashes when multiple engine instances try to register the same capabilities
     if (this.capabilities.has(capability.id)) {
-      throw new Error(`Capability with id ${capability.id} already exists`)
+      console.warn(`⚠️ CapabilityRegistry: Capability with id ${capability.id} already exists, will be skipped`)
+      // Instead of throwing an error, we'll return early
+      return
     }
     
     const validTypes: Capability['type'][] = ['model', 'agent', 'tool', 'effect']

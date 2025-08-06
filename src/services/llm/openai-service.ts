@@ -10,13 +10,22 @@ import type {
 /**
  * OpenAI LLM Service
  * Handles all interactions with OpenAI's API for AI-driven functionality
+ * Implemented as a true singleton to prevent multiple instances during hot reloads
  */
-export class OpenAIService {
-  private client: OpenAI | null = null
-  private isInitialized = false
+// Define global type for singleton instance
+declare global {
+  var __OPENAI_SERVICE_INSTANCE__: OpenAIService | undefined
+}
 
+export class OpenAIService {
+  private client: OpenAI | null = null;
+  private isInitialized = false;
+  
   constructor() {
-    this.initializeClient()
+    // Singleton initialization happens in the exported instance
+    // This constructor should only be called once via the singleton pattern
+    console.log('🏭 OpenAIService constructor called')
+    this.initializeClient();
   }
 
   /**
@@ -487,13 +496,15 @@ Generate a JSON response with:
     
     // Handle different conversation steps
     if (context.conversationStep === 'naming-one') {
-      const responses = [
-        `Thank you! I'll be happy to be called that. Now, what should I call you? I'd love to know your name so we can have a more personal connection.`,
-        `Perfect! I like that name. And what about you - what would you like me to call you?`,
-        `Great choice! Now I'm curious - what's your name? I'd love to get to know you better.`
+      // For naming-one step, this should be an initial greeting asking for AI name
+      // NOT a response to user giving AI a name
+      const greetingResponses = [
+        `Welcome to Origin! I'm One, your AI navigator. I'm here to help you create amazing content and bring your ideas to life. Would you like to give me a new name?`,
+        `Hi there! I'm One, your creative companion in this generative universe. I can help you explore endless possibilities. What would you like to call me?`,
+        `Hello! I'm One, your AI guide in Origin. Together we can create incredible content and experiences. Would you like to give me a special name?`
       ]
       return {
-        content: responses[Math.floor(Math.random() * responses.length)]
+        content: greetingResponses[Math.floor(Math.random() * greetingResponses.length)]
       }
     }
     
@@ -582,3 +593,12 @@ Generate a JSON response with:
     return `Create ${enrichedIntent.rawIntent.contentType} content that ${enrichedIntent.refinedGoal}. Target audience: ${enrichedIntent.targetAudience}. Context: ${enrichedIntent.contextualBackground}`
   }
 }
+
+// Create global singleton instance
+if (!globalThis.__OPENAI_SERVICE_INSTANCE__) {
+  console.log('🌍 Creating global OpenAIService instance')
+  globalThis.__OPENAI_SERVICE_INSTANCE__ = new OpenAIService()
+}
+
+// Export the singleton instance
+export const openAIService = globalThis.__OPENAI_SERVICE_INSTANCE__

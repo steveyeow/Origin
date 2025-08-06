@@ -5,10 +5,16 @@ import { useAppStore } from '@/store/useAppStore'
 
 interface OneCharacterProps {
   onClick?: () => void
+  hidden?: boolean // Add hidden prop
 }
 
-export default function OneCharacter({ onClick }: OneCharacterProps) {
+export default function OneCharacter({ onClick, hidden = false }: OneCharacterProps) {
   const { isOnboardingActive } = useAppStore()
+
+  // If hidden is true, don't render the character
+  if (hidden) {
+    return null
+  }
 
   return (
     <div className="relative flex items-center justify-center">
@@ -173,38 +179,7 @@ export default function OneCharacter({ onClick }: OneCharacterProps) {
       </motion.div>
 
       {/* Interactive hint - appears only when not in onboarding */}
-      {!isOnboardingActive && (
-        <motion.div
-          className="absolute -bottom-12 text-center w-full"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 2, duration: 1 }}
-        >
-          <motion.div
-            className="text-sm text-blue-300 font-light"
-            animate={{
-              opacity: [0.6, 1, 0.6],
-            }}
-            transition={{
-              duration: 3,
-              repeat: Infinity,
-              ease: "easeInOut"
-            }}
-          >
-            <svg 
-              className="w-5 h-5 mx-auto mb-1" 
-              fill="currentColor" 
-              viewBox="0 0 20 20"
-            >
-              <path 
-                fillRule="evenodd" 
-                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" 
-                clipRule="evenodd" 
-              />
-            </svg>
-          </motion.div>
-        </motion.div>
-      )}
+      {/* Removed upward arrow icon as requested */}
     </div>
   )
 }

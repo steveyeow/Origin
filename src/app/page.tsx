@@ -11,17 +11,28 @@ import BackgroundSwitcher, { BackgroundTheme } from '@/components/ui/BackgroundS
 import { useThemeContext } from '@/context/ThemeContext'
 import TypewriterText from '@/components/ui/TypewriterText'
 import { ElevenLabsService, VOICE_PRESETS, DEFAULT_ONE_VOICE_CONFIG } from '@/services/voice/elevenlabs-service'
+import ModeSelector from '@/components/ui/ModeSelector'
+import { useAuth } from '@/components/auth/AuthProvider'
 
 export default function Home() {
+  console.log('🏠 HOME: Component rendering started')
+  
   const { isOnboardingActive, setOnboardingActive, setCurrentStep, messages } = useAppStore()
   const { initializeUser, startOnboarding, isLoading } = useEngine()
   const { theme, setTheme } = useThemeContext()
+  const { user, isAuthenticated, login } = useAuth()
+  
+  console.log('🏠 HOME: Initial state after hooks:', {
+    isOnboardingActive,
+    isLoading
+  })
   const userId = 'user-123' // This would come from auth in a real app
   const [userIdState] = useState(() => `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
   const [showInitialGreeting, setShowInitialGreeting] = useState(true)
   const [showPreviewMode, setShowPreviewMode] = useState(false)
   const [showGreetingBox, setShowGreetingBox] = useState(false)
   const [greetingComplete, setGreetingComplete] = useState(false)
+  const greetingCompleteRef = useRef(false)
   
   // Voice Mode states - Start in normal mode, not Voice Mode
   const [isVoiceMode, setIsVoiceMode] = useState(false)
@@ -30,6 +41,7 @@ export default function Home() {
   const [isMuted, setIsMuted] = useState(false)
   const [voiceService, setVoiceService] = useState<ElevenLabsService | null>(null)
   const [hasPlayedWelcome, setHasPlayedWelcome] = useState(false)
+  const [showModeSelector, setShowModeSelector] = useState(false)
   const [streamingMessage, setStreamingMessage] = useState('')
   const conversationFlowRef = useRef<any>(null)
   
@@ -38,6 +50,16 @@ export default function Home() {
     const initUser = async () => {
       try {
         await initializeUser(userIdState)
+        
+        // Skip greeting if onboarding is already active (coming from mode selector)
+        if (isOnboardingActive) {
+          console.log('🚀 Onboarding already active, skipping greeting')
+          setShowInitialGreeting(false)
+          setGreetingComplete(true)
+          greetingCompleteRef.current = true
+          return
+        }
+        
         // Show initial greeting in center of page
         setShowInitialGreeting(true)
         
@@ -47,12 +69,15 @@ export default function Home() {
         }, 3000) // 3 second delay before showing the greeting box
 
         // Set greeting complete after all typewriter animations finish
-        // Last typewriter delay (6000) + text length * speed (30) + buffer (1000)
-        const lastTextLength = "Can you give me a name you like?".length;
-        const totalAnimationTime = 6000 + (lastTextLength * 30) + 1000;
+        // Last typewriter delay (7000) + text length * speed (30) + buffer (500)
+        const lastTextLength = "Would you like to give me a new name?".length;
+        const totalAnimationTime = 7000 + (lastTextLength * 30) + 500;
         
         setTimeout(() => {
           setGreetingComplete(true)
+          greetingCompleteRef.current = true
+          // Keep showInitialGreeting true so Start Exploration button can show
+          console.log('✅ Greeting complete set to true, ready for Start Exploration')
         }, totalAnimationTime)
       } catch (error) {
         console.error('Failed to initialize user:', error)
@@ -60,9 +85,9 @@ export default function Home() {
     }
     
     initUser()
-  }, [userIdState, initializeUser])
+  }, [userIdState, initializeUser, isOnboardingActive])
   
-  // Initialize voice service when entering Voice Mode
+  // Initialize voice service for welcome message and Voice Mode
   useEffect(() => {
     const initVoiceService = async () => {
       const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY
@@ -83,6 +108,20 @@ export default function Home() {
           })
           setVoiceService(service)
           console.log('✅ Voice service initialized successfully')
+          
+          // Play welcome message after a delay
+          if (showGreetingBox && !hasPlayedWelcome) {
+            setTimeout(async () => {
+              try {
+                const welcomeText = "Hi traveler, welcome to Origin, your generative universe that thinks, feels, creates with you. I'm One, your navigator. Would you like to give me a new name?"
+                await service.speakText(welcomeText)
+                setHasPlayedWelcome(true)
+                console.log('✅ Welcome message played successfully')
+              } catch (error) {
+                console.error('❌ Failed to play welcome message:', error)
+              }
+            }, 3500) // Start after first line appears
+          }
         } catch (error) {
           console.error('❌ Failed to initialize voice service:', error)
         }
@@ -93,23 +132,75 @@ export default function Home() {
       }
     }
     
-    if (isVoiceMode) {
-      initVoiceService()
-    }
-  }, [isVoiceMode, voiceService])
+    // Initialize voice service for welcome message
+    initVoiceService()
+  }, [showGreetingBox, hasPlayedWelcome, voiceService])
   
-  // Handle One click to start conversation
-  const handleOneClick = async () => {
-    if (!isOnboardingActive) {
-      setShowInitialGreeting(false)
-      try {
-        setOnboardingActive(true)
-        setCurrentStep('naming-one')
-        await startOnboarding(userId)
-      } catch (error) {
-        console.error('Failed to start onboarding:', error)
+  // Voice mode is now set directly via handleModeSelection - no sessionStorage needed
+  
+  // Check for stored mode after login
+  useEffect(() => {
+    if (isAuthenticated && !isOnboardingActive) {
+      const storedMode = sessionStorage.getItem('selectedMode')
+      console.log('🔍 Checking for stored mode after login:', {
+        isAuthenticated,
+        storedMode,
+        isOnboardingActive
+      })
+      
+      if (storedMode && (storedMode === 'chat' || storedMode === 'voice')) {
+        console.log('🎯 Found stored mode after login:', storedMode)
+        startConversationWithMode(storedMode as 'chat' | 'voice')
       }
     }
+  }, [isAuthenticated, isOnboardingActive])
+  
+  // Handle One click to start conversation
+  const handleOneClick = () => {
+    console.log('👁️ One clicked - showing mode selector')
+    setShowModeSelector(true)
+    setShowInitialGreeting(false)
+  }
+  
+  const handleModeSelection = (mode: 'chat' | 'voice') => {
+    console.log('🎯 Mode selected:', mode)
+    
+    // Store selected mode for after login
+    sessionStorage.setItem('selectedMode', mode)
+    console.log('💾 Stored selected mode in sessionStorage:', mode)
+    
+    // Check if user is already authenticated
+    if (isAuthenticated) {
+      console.log('✅ User already authenticated - starting conversation')
+      startConversationWithMode(mode)
+    } else {
+      console.log('🚀 User not authenticated - starting Auth0 login')
+      // Trigger Auth0 login - user will return after authentication
+      login()
+    }
+  }
+  
+  // Start conversation with selected mode
+  const startConversationWithMode = (mode: 'chat' | 'voice') => {
+    console.log('🚀 Starting conversation with mode:', mode)
+    
+    // Set voice mode state
+    if (mode === 'voice') {
+      setIsVoiceMode(true)
+      console.log('🎤 Voice mode activated')
+    } else {
+      setIsVoiceMode(false)
+      console.log('💬 Chat mode activated')
+    }
+    
+    // Start onboarding flow
+    setOnboardingActive(true)
+    setCurrentStep('naming-one')
+    setShowModeSelector(false)
+    
+    // Clear stored mode
+    sessionStorage.removeItem('selectedMode')
+    console.log('🗑️ Cleared selectedMode from sessionStorage')
   }
   
   // Auto-enable preview mode only when actual preview content is generated
@@ -172,8 +263,8 @@ export default function Home() {
         onThemeChange={setTheme} 
       />
       
-      {/* Initial centered greeting */}
-      {showInitialGreeting && (
+      {/* Initial centered greeting - only show when onboarding is not active */}
+      {showInitialGreeting && !isOnboardingActive && (
         <div className="absolute inset-0 flex items-center justify-center z-20">
           <motion.div 
             className="max-w-lg text-center px-6"
@@ -193,90 +284,114 @@ export default function Home() {
                 ease: "easeInOut"
               }}
             >
-              <OneCharacter onClick={handleOneClick} />
+              <OneCharacter onClick={handleOneClick} hidden={true} />
             </motion.div>
             
             {showGreetingBox && (
               <motion.div
-                className={`backdrop-blur-md border p-6 rounded-2xl shadow-lg ${theme === 'white' ? 'bg-gray-100/80 border-gray-200' : 'bg-white/10 border-white/20'}`}
+                className="text-center cursor-pointer outline-none"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ 
                   opacity: 1, 
                   y: 0,
-                  boxShadow: ['0 4px 20px rgba(139, 92, 246, 0.3)', '0 4px 30px rgba(59, 130, 246, 0.4)', '0 4px 20px rgba(139, 92, 246, 0.3)'],
                 }}
                 transition={{
                   opacity: { duration: 0.5 },
                   y: { duration: 0.5 },
-                  boxShadow: {
-                    duration: 4,
-                    repeat: Infinity,
-                    ease: "easeInOut"
+                }}
+                onClick={handleOneClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleOneClick()
                   }
                 }}
+                title="Click to start Exploration"
+                style={{ outline: 'none' }}
               >
-              <div className={`text-left text-lg md:text-xl leading-relaxed space-y-4 ${theme === 'white' ? 'text-black' : 'text-white'}`}>
-                <div>
-                  <TypewriterText 
-                    text="Hi traveler, welcome to Origin"
-                    speed={30}
-                    startDelay={3000}
-                    style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
-                  />
+                <div className={`text-lg md:text-xl leading-relaxed space-y-4 ${theme === 'white' ? 'text-black' : 'text-white'}`}>
+                  <div>
+                    <TypewriterText 
+                      text="Hi traveler, welcome to Origin"
+                      speed={30}
+                      startDelay={3000}
+                      style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+                    />
+                  </div>
+                  <div>
+                    <TypewriterText 
+                      text="your generative universe"
+                      speed={30}
+                      startDelay={4000}
+                      style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+                    />
+                  </div>
+                  <div>
+                    <TypewriterText 
+                      text="thinks, feels, creates with you."
+                      speed={30}
+                      startDelay={5000}
+                      style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+                    />
+                  </div>
+                  <div>
+                    <TypewriterText 
+                      text="I'm One, your navigator."
+                      speed={30}
+                      startDelay={6000}
+                      style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+                    />
+                  </div>
+                  <div>
+                    <TypewriterText 
+                      text="Would you like to give me a new name?"
+                      speed={30}
+                      startDelay={7000}
+                      style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <TypewriterText 
-                    text="your generative universe"
-                    speed={30}
-                    startDelay={4000}
-                    style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
+                
+                {/* Pulsing indicator - Pale Blue Dot */}
+                <motion.div
+                  className="mt-12 flex justify-center" // 增加与打招呼文案的距离
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 9000, duration: 1 }}
+                  key={`pale-blue-dot-${theme}`} // 添加key防止主题切换时重新动画
+                >
+                  <motion.div
+                    className={`w-1 h-1 rounded-full ${theme === 'white' ? 'bg-blue-500/40' : 'bg-blue-300/60'}`} // 更小的尺寸和更透明的效果
+                    animate={{
+                      scale: [1, 1.2, 1], // 更微妙的脉冲
+                      opacity: [0.3, 0.7, 0.3], // 更淡的透明度范围
+                    }}
+                    transition={{
+                      duration: 3,
+                      repeat: Infinity,
+                      ease: "easeInOut"
+                    }}
                   />
-                </div>
-                <div>
-                  <TypewriterText 
-                    text="that thinks, feels, creates with you."
-                    speed={30}
-                    startDelay={5000}
-                    style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
-                  />
-                </div>
-                <div>
-                  <TypewriterText 
-                    text="I'm One, your navigator."
-                    speed={30}
-                    startDelay={6000}
-                    style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
-                  />
-                </div>
-                <div>
-                  <TypewriterText 
-                    text="Would you like to give me a new name?"
-                    speed={30}
-                    startDelay={7000}
-                    style={{ color: theme === 'white' ? '#000000' : '#ffffff' }}
-                  />
-                </div>
-              </div>
-            </motion.div>
+                </motion.div>
+                
+                {/* Subtle hint */}
+                <motion.div
+                  className="text-sm opacity-60"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.8 }}
+                  transition={{ delay: 9000, duration: 1 }}
+                  key={`start-exploration-${theme}`} // Add key to prevent animation reset on theme change
+                >
+                  <span className={`${theme === 'white' ? 'text-gray-600' : 'text-white/80'}`}>
+                    Start Exploration
+                  </span>
+                </motion.div>
+              </motion.div>
             )}
             
-            {greetingComplete && (
-              <motion.button
-                className={`mt-12 backdrop-blur-md border px-10 py-4 rounded-2xl shadow-lg font-medium transition-all duration-300 z-30 relative ${
-                  theme === 'white' 
-                    ? 'bg-blue-100/50 border-blue-200/50 text-blue-900 hover:bg-blue-100/70' 
-                    : 'bg-white/10 border-white/20 text-white hover:bg-white/15'
-                }`}
-                whileHover={{ scale: 1.05, boxShadow: '0 4px 20px rgba(139, 92, 246, 0.3)' }}
-                whileTap={{ scale: 0.95 }}
-                onClick={handleOneClick}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.5 }}
-              >
-                <span>Start Exploration</span>
-              </motion.button>
-            )}
+
           </motion.div>
         </div>
       )}
@@ -287,10 +402,12 @@ export default function Home() {
           <div className="relative h-screen flex justify-center">
             {/* DEBUG: Voice service passing */}
             {(() => {
-              console.log('🔊 Passing voiceService to ConversationFlow:', {
+              console.log('🔊 Passing props to ConversationFlow:', {
                 voiceService: !!voiceService,
                 voiceServiceType: voiceService?.constructor?.name,
-                isVoiceMode
+                initialVoiceMode: isVoiceMode,
+                isMuted,
+                timestamp: new Date().toISOString()
               })
               return null
             })()}
@@ -298,6 +415,8 @@ export default function Home() {
               className="h-screen max-w-4xl w-full"
               isMuted={isMuted}
               voiceService={voiceService ?? undefined}
+              initialVoiceMode={isVoiceMode}
+              skipInitialGreeting={showInitialGreeting} // Skip if page-level greeting is shown
               onVoiceModeChange={(newIsVoiceMode) => {
                 // Update parent state for DynamicBackground visual effects
                 setIsVoiceMode(newIsVoiceMode)
@@ -323,8 +442,13 @@ export default function Home() {
         </div>
       )}
       
+      {/* Mode Selector */}
+      {showModeSelector && (
+        <ModeSelector onModeSelect={handleModeSelection} />
+      )}
+      
       {/* Landing page with centered One character */}
-      {!isOnboardingActive && !showInitialGreeting && (
+      {!isOnboardingActive && !showInitialGreeting && !showModeSelector && (
         <div className="h-screen flex items-center justify-center px-6">
           <motion.div 
             className="relative"
@@ -347,7 +471,7 @@ export default function Home() {
             />
             
             {/* One character */}
-            <OneCharacter onClick={handleOneClick} />
+            <OneCharacter onClick={handleOneClick} hidden={false} />
           </motion.div>
         </div>
       )}

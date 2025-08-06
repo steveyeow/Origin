@@ -9,7 +9,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        'sans': ['Space Grotesk', 'system-ui', '-apple-system', 'sans-serif'],
+        'sans': ['var(--font-space-grotesk)', 'Space Grotesk', 'system-ui', '-apple-system', 'sans-serif'],
+        'mono': ['var(--font-fira-code)', 'Fira Code', 'monospace'],
       },
     },
   },

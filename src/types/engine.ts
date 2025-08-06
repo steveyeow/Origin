@@ -1,5 +1,37 @@
-// Core Engine Type Definitions for AI-Driven Conversation Flow
-// Designed to be extensible for future sophisticated implementations
+/**
+ * ENGINE TYPE DEFINITIONS
+ * 
+ * PURPOSE: Central type definitions for the entire OriginOS engine architecture
+ * RESPONSIBILITY: Defines interfaces, types, and contracts for all engine layers
+ * 
+ * KEY COMPONENTS:
+ * - UserContext: User state and conversation context management
+ * - Engine Response: Standard response format across all layers
+ * - Capability System: AI model and tool capability definitions
+ * - Layer Interfaces: Contracts for all 8 engine layers (ISL, IRL, Planning, etc.)
+ * - Process Tracking: Execution monitoring and debugging types
+ * 
+ * USAGE: Imported by all engine layers and UI components for type safety
+ * DEPENDENCIES: None (pure type definitions)
+ */
+
+/**
+ * Unified conversation step type used across the application
+ * This ensures consistency between engine and UI layers
+ */
+export type ConversationStep = 
+  | 'landing'      // Initial landing state
+  | 'naming-one'   // User naming the AI
+  | 'naming-user'  // AI asking for user's name
+  | 'scenario'     // Presenting creative scenario
+  | 'completed'    // Onboarding completed
+
+export interface ConversationHistory {
+  messages: Interaction[]
+  lastUpdated: Date
+  totalInteractions: number
+  summary?: string
+}
 
 export interface UserContext {
   userId: string
@@ -7,10 +39,16 @@ export interface UserContext {
   name?: string
   oneName?: string
   emotionalState?: EmotionalState
+  currentStep?: ConversationStep
+  step?: ConversationStep // Legacy field for backward compatibility
   recentInteractions: Interaction[]
   preferences: UserPreferences
   timeContext: TimeContext
-  currentStep: OnboardingStep
+  history?: ConversationHistory
+  currentScenario?: Scenario
+  activeCapabilities?: string[]
+  lastInteraction?: Date
+  metadata?: Record<string, any>
 }
 
 export interface EmotionalState {
@@ -70,6 +108,7 @@ export type ScenarioType =
   | 'continuation'
   | 'rest_mode'
   | 'onboarding'
+  | 'image_generation'
 
 export type ContentType = 
   | 'text'
@@ -80,13 +119,17 @@ export type ContentType =
   | 'story'
   | 'mixed'
 
+export type ContentQuality = 'high' | 'medium' | 'low';
+
 // Engine Response
 export interface EngineResponse {
   scenario?: Scenario
   message?: string
-  nextStep?: OnboardingStep
+  nextStep?: ConversationStep
   suggestions?: string[]
+  availableCapabilities?: Capability[]
   error?: string
+  requestId?: string // Unique identifier for UI synchronization
 }
 
 // ===== CAPABILITY SYSTEM =====
@@ -194,6 +237,22 @@ export interface Task {
   dependencies: string[]
 }
 
+export interface PlannedTask {
+  id: string
+  description: string
+  dependencies: string[]
+  estimatedDuration: number
+  priority: number
+  requiredCapabilities: string[]
+  type: string
+  input: any
+  expectedOutput: any
+  scheduledStart: Date
+  estimatedCompletion: Date
+  status?: string
+  result?: TaskResult | null
+}
+
 export interface ExecutionPlan {
   id: string
   intentId: string
@@ -221,13 +280,35 @@ export interface FallbackPlan {
 
 // ===== EXECUTION SYSTEM =====
 export interface ExecutionContext {
+  id: string
   planId: string
   currentTask: string
   progress: number
   startTime: Date
+  endTime?: Date
   estimatedCompletion: Date
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
   intermediateResults: IntermediateResult[]
   errors: ExecutionError[]
+  tasks: ExecutionTask[]
+  results: TaskResult[]
+}
+
+export interface ExecutionTask {
+  id: string
+  description: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  startTime?: Date | null
+  endTime?: Date | null
+  error?: any | null
+  priority?: number
+  dependencies: string[]
+  assignedCapability: string | Capability
+  scheduledStart?: Date
+  estimatedCompletion?: Date
+  type?: string
+  requiredCapabilities?: string[]
+  result?: TaskResult | null
 }
 
 export interface IntermediateResult {
@@ -242,15 +323,19 @@ export interface IntermediateResult {
 export interface ExecutionError {
   taskId: string
   error: string
+  message: string
   severity: 'warning' | 'error' | 'critical'
   timestamp: Date
   recovery?: string
+  [key: string]: any
 }
 
 export interface TaskResult {
   taskId: string
   status: 'success' | 'failed' | 'partial'
   output: any
+  content?: any
+  contentType?: ContentType
   metadata: ResultMetadata
   executionTime: number
   cost: number
@@ -262,6 +347,9 @@ export interface ResultMetadata {
   tokensUsed?: number
   model?: string
   processingTime: number
+  capability?: string
+  executionTime?: number
+  cost?: number
   [key: string]: any
 }
 
@@ -270,6 +358,9 @@ export interface GeneratedContent {
   id: string
   type: ContentType
   content: any
+  textContent?: string
+  mediaContent?: any
+  primaryContent?: any
   metadata: ContentMetadata
   preview: PreviewData
   editingSuggestions: EditingSuggestion[]
@@ -280,14 +371,18 @@ export interface ContentMetadata {
   title?: string
   description?: string
   tags: string[]
+  sources?: string[]
   createdAt: Date
   lastModified: Date
+  generatedAt?: Date
   version: number
   qualityMetrics: QualityMetrics
 }
 
 export interface PreviewData {
   thumbnail?: string
+  thumbnailUrl?: string
+  title?: string
   summary: string
   keyFeatures: string[]
   interactiveElements: InteractiveElement[]
@@ -302,9 +397,10 @@ export interface InteractiveElement {
 }
 
 export interface EditingSuggestion {
-  type: 'improvement' | 'alternative' | 'extension'
+  type: 'improvement' | 'alternative' | 'extension' | 'technical' | 'structure' | 'style' | 'clarity'
+  title?: string
   description: string
-  impact: 'minor' | 'moderate' | 'major'
+  impact: 'minor' | 'moderate' | 'major' | 'medium'
   effort: 'low' | 'medium' | 'high'
 }
 
@@ -364,7 +460,7 @@ export interface LearningPoint {
 export interface IInteractiveScenarioLayer {
   proposeScenario(context: UserContext): Promise<Scenario>
   handleUserResponse(response: string, context: UserContext): Promise<EngineResponse>
-  getOnboardingScenario(step: OnboardingStep, context: UserContext): Promise<Scenario>
+  getOnboardingScenario(step: ConversationStep | undefined, context: UserContext): Promise<Scenario>
   updateUserContext(userId: string, updates: Partial<UserContext>): Promise<void>
   getUserContext(userId: string): UserContext | undefined
   createUserContext(userId: string): UserContext
@@ -410,8 +506,38 @@ export interface IOutputLayer {
   exportContent(content: GeneratedContent, format: string): Promise<any>
 }
 
+export interface IIterationLayer {
+  processFeedback(feedback: UserFeedback, context: UserContext): Promise<void>
+  refineContent(content: GeneratedContent, feedback: UserFeedback): Promise<GeneratedContent>
+  learnFromInteraction(interaction: Interaction, context: UserContext): Promise<void>
+  trackQualityMetrics(contentId: string, metrics: QualityMetrics): Promise<void>
+  suggestNextSteps(context: UserContext, currentContent: GeneratedContent): Promise<string[]>
+}
+
+export interface UserFeedback {
+  contentId: string
+  userId: string
+  rating: number
+  comments?: string
+  specificFeedback?: Record<string, any>
+  timestamp: Date
+}
+
+export interface ExecutionResult {
+  plan: ExecutionPlan
+  context: ExecutionContext
+  results: TaskResult[]
+  success: boolean
+  errors?: ExecutionError[]
+  metrics: {
+    totalTime: number
+    totalCost: number
+    qualityScore: number
+  }
+}
+
 // ===== CORE ENGINE INTERFACE =====
-export interface IOriginXEngine {
+export interface IOriginEngine {
   // Core conversation flow
   processUserInput(input: string, userId: string): Promise<EngineResponse>
   
@@ -422,6 +548,7 @@ export interface IOriginXEngine {
   getInvocationLayer(): IInvocationLayer
   getExecutionLayer(): IExecutionLayer
   getOutputLayer(): IOutputLayer
+  getIterationLayer(): IIterationLayer
   
   // Process transparency
   getProcessTrace(sessionId: string): Promise<ProcessTrace>
@@ -429,4 +556,8 @@ export interface IOriginXEngine {
   // Capability management
   onCapabilityAdded(callback: (capability: Capability) => void): void
   onCapabilityRemoved(callback: (capabilityId: string) => void): void
+  
+  // Event handling
+  setupEventHandlers(): void
+  triggerCapabilityAdded(capability: Capability): void
 }
