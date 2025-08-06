@@ -1,6 +1,6 @@
-# OriginX - Real-Time Generative Content Engine
+# OriginOS - Real-Time Generative Content Engine
 
-**OriginX** is a revolutionary real-time generative content engine that enables ordinary users to create high-quality multimodal content through zero-prompt UX and proactive recommendation mechanisms.
+**OriginOS** is a revolutionary real-time generative content engine that enables ordinary users to create high-quality multimodal content through zero-prompt UX and proactive recommendation mechanisms.
 
 ## 🎯 Core Mission
 
@@ -16,7 +16,7 @@ Build a **real-time generative content engine** that enables ordinary users (non
 
 ## 🏗️ Architecture Overview
 
-OriginX is built on a sophisticated **8-layer engine architecture** designed for scalability and extensibility:
+OriginOS is built on a sophisticated **8-layer engine architecture** designed for scalability and extensibility:
 
 ```
 User Interaction → ISL → IRL → Planning → MIL/AIL → Execution → Output → Iteration → ISL
@@ -55,8 +55,8 @@ User Interaction → ISL → IRL → Planning → MIL/AIL → Execution → Outp
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/originx.git
-cd originx
+git clone https://github.com/your-username/OriginOS.git
+cd OriginOS
 ```
 
 2. Install dependencies:
@@ -153,4 +153,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🌟 Vision
 
-OriginX aims to democratize content creation by making sophisticated generative AI accessible to everyone through intuitive, proactive user experiences. We're building not just another AI tool, but a comprehensive ecosystem that evolves with user needs and community contributions.
+OriginOS aims to democratize content creation by making sophisticated generative AI accessible to everyone through intuitive, proactive user experiences. We're building not just another AI tool, but a comprehensive ecosystem that evolves with user needs and community contributions.
